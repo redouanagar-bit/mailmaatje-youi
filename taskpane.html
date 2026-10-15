@@ -96,6 +96,7 @@
   .pr { font-size:10px; font-weight:600; padding:1px 6px; border-radius:10px; border:1px solid var(--line); margin-left:6px; vertical-align:middle; }
   .pr.hoog { color:var(--danger); border-color:var(--danger); }
   .pr.laag { color:var(--muted); }
+  .pr.afgehandeld { color:#107c10; border-color:#107c10; }
   .dl { border-top:1px solid var(--line); padding:7px 0; }
   .dl .meta { font-size:11px; color:var(--muted); }
   .dl .txt { white-space:pre-wrap; margin-top:2px; }
@@ -155,6 +156,7 @@
       <button class="btn lite" id="clearDeadline" title="Deadline wissen">Wis</button>
     </div>
     <div class="warn" id="overdue"></div>
+    <div class="foot" id="flagState" style="margin-top:4px"></div>
     <details id="remBox">
       <summary>Herinneringen (<span id="remCount">0</span> gekozen)</summary>
       <div class="rem" id="rem"></div>
@@ -187,6 +189,7 @@
           <option value="laag">Prio: Laag</option>
           <option value="middel">Prio: Middel</option>
           <option value="hoog">Prio: Hoog</option>
+          <option value="afgehandeld">Afgehandeld</option>
         </select>
       </div>
       <div id="dlog"></div>
@@ -238,6 +241,7 @@
       <button class="btn lite ckp" data-p="hoog">Hoog</button>
       <button class="btn lite ckp" data-p="middel">Middel</button>
       <button class="btn lite ckp" data-p="laag">Laag</button>
+      <button class="btn lite ckp" data-p="afgehandeld">Afgehandeld</button>
     </div>
     <div id="ckDos" class="empty">—</div>
   </div>
@@ -319,7 +323,7 @@
     $("none").hidden = true; $("app").hidden = false;
     $("subject").textContent = item.subject || "(geen onderwerp)";
     $("newNote").value = "";
-    $("related").textContent = "—"; $("dossier").textContent = "—"; lastRelated = []; dlog = null; $("dlogBox").hidden = true; $("noteTargetRow").hidden = true; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
+    $("related").textContent = "—"; $("dossier").textContent = "—"; $("flagState").textContent = ""; lastRelated = []; dlog = null; $("dlogBox").hidden = true; $("noteTargetRow").hidden = true; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
     msg("Laden…");
     item.loadCustomPropertiesAsync(function (r) {
       if (seq !== loadSeq) return;
@@ -588,8 +592,8 @@
   // Gegevens van de huidige mail via Graph (één keer per mail).
   function currentMessage(token) {
     if (graphMsg) return Promise.resolve(graphMsg);
-    return graph("GET", "/me/messages/" + restId() + "?$select=id,subject,conversationId,internetMessageId,webLink,from,receivedDateTime,categories", null, token)
-      .then(function (m) { graphMsg = m; return m; });
+    return graph("GET", "/me/messages/" + restId() + "?$select=id,subject,conversationId,internetMessageId,webLink,from,receivedDateTime,categories,flag", null, token)
+      .then(function (m) { graphMsg = m; showFlag(m.flag); return m; });
   }
 
   // Bij laden: aangemeld? Dan agenda-status en gerelateerde mails ophalen.
@@ -702,10 +706,18 @@
     if (start > due) start = due;
     return { flagStatus: "flagged", startDateTime: { dateTime: isoLocal(start), timeZone: tz }, dueDateTime: { dateTime: isoLocal(due), timeZone: tz } };
   }
+  function showFlag(f) {
+    var el = $("flagState"); if (!f) { el.textContent = ""; return; }
+    if (f.flagStatus === "complete") el.textContent = "Vlag: voltooid";
+    else if (f.flagStatus === "flagged") el.textContent = "Vlag: opvolgen" + (f.dueDateTime && f.dueDateTime.dateTime ? ", vervalt " + fmtD(f.dueDateTime.dateTime.slice(0, 10)) : "");
+    else el.textContent = "Geen vlag";
+  }
   function syncFlag(okText) {
     if (!pca || !data) return;
     getToken(false).then(function (token) {
-      return graph("PATCH", "/me/messages/" + restId(), { flag: flagBody() }, token).then(function () {
+      var fb = flagBody();
+      return graph("PATCH", "/me/messages/" + restId(), { flag: fb }, token).then(function () {
+        showFlag(fb); if (graphMsg) graphMsg.flag = fb;
         if (okText) msg(okText);
       });
     }).catch(function (e) {
@@ -883,7 +895,7 @@
       var j = JSON.parse(t); return { entries: Array.isArray(j.entries) ? j.entries : [], prio: j.prio || "middel" }; } catch (e) { return { entries: [], prio: "middel" }; }
   }
   var PRIO_IMP = { laag: "low", middel: "normal", hoog: "high" }, IMP_PRIO = { low: "laag", normal: "middel", high: "hoog" };
-  function prioLabel(p) { return { laag: "Laag", middel: "Middel", hoog: "Hoog" }[p] || "Middel"; }
+  function prioLabel(p) { return { laag: "Laag", middel: "Middel", hoog: "Hoog", afgehandeld: "Afgehandeld" }[p] || "Middel"; }
   function loadDlog(token, name) {
     dlog = { name: name, id: null, entries: [], prio: "middel", loading: true };
     renderDlog();
@@ -898,9 +910,10 @@
   function dlogSave(token) {
     var body = { contentType: "text", content: JSON.stringify({ dossier: dlog.name, prio: dlog.prio || "middel", entries: dlog.entries }) };
     var imp = PRIO_IMP[dlog.prio] || "normal";
-    if (dlog.id) return graph("PATCH", "/me/messages/" + dlog.id, { body: body, importance: imp }, token);
+    var fl = dlog.prio === "afgehandeld" ? { flagStatus: "complete" } : { flagStatus: "notFlagged" };
+    if (dlog.id) return graph("PATCH", "/me/messages/" + dlog.id, { body: body, importance: imp, flag: fl }, token);
     return getLogFolder(token).then(function (fid) {
-      return graph("POST", "/me/mailFolders/" + fid + "/messages", { subject: DOSSIER_PREFIX + dlog.name, body: body, importance: imp, isDraft: true }, token).then(function (mm) { dlog.id = mm.id; });
+      return graph("POST", "/me/mailFolders/" + fid + "/messages", { subject: DOSSIER_PREFIX + dlog.name, body: body, importance: imp, flag: fl, isDraft: true }, token).then(function (mm) { dlog.id = mm.id; });
     });
   }
   var dlogQueue = Promise.resolve();
@@ -972,16 +985,16 @@
       if (!names.length) { box3.textContent = "Nog geen dossiers. Maak er een via 'Dossier samenstellen' bij een mail."; return; }
       var prios = {};
       getLogFolder(token).then(function (fid) {
-        return graph("GET", "/me/mailFolders/" + fid + "/messages?$select=subject,importance&$top=100", null, token);
+        return graph("GET", "/me/mailFolders/" + fid + "/messages?$select=subject,importance,flag&$top=100", null, token);
       }).then(function (r) {
-        (r.value || []).forEach(function (x) { if (isDossierCat(x.subject)) prios[x.subject.slice(DOSSIER_PREFIX.length)] = IMP_PRIO[x.importance] || "middel"; });
+        (r.value || []).forEach(function (x) { if (isDossierCat(x.subject)) prios[x.subject.slice(DOSSIER_PREFIX.length)] = (x.flag && x.flag.flagStatus === "complete") ? "afgehandeld" : (IMP_PRIO[x.importance] || "middel"); });
       }).catch(function () {}).then(function () {
         return Promise.all(names.map(function (n) {
           return graph("GET", "/me/messages?$filter=categories/any(c:c eq '" + (DOSSIER_PREFIX + n).replace(/'/g, "''") + "')&$select=id,subject,from,receivedDateTime,categories&$top=1", null, token)
             .then(function (r) { return { name: n, prio: prios[n] || "middel", last: (r.value || [])[0] }; }).catch(function () { return { name: n, prio: prios[n] || "middel", last: null }; });
         }));
       }).then(function (rows) {
-        var rank = { hoog: 0, middel: 1, laag: 2 };
+        var rank = { hoog: 0, middel: 1, laag: 2, afgehandeld: 3 };
         rows.sort(function (a, b) { if (rank[a.prio] !== rank[b.prio]) return rank[a.prio] - rank[b.prio]; return ((b.last && b.last.receivedDateTime) || "") < ((a.last && a.last.receivedDateTime) || "") ? -1 : 1; });
         ckDosRows = rows; renderCkDos();
       });
@@ -990,8 +1003,8 @@
   var ckStaleList = [], ckDosRows = [], ckPrio = "alle";
   function renderCkDos() {
     var box3 = $("ckDos"); box3.innerHTML = "";
-    var rows = ckDosRows.filter(function (r) { return ckPrio === "alle" || r.prio === ckPrio; });
-    if (!rows.length) { box3.textContent = "Geen dossiers met deze prioriteit."; return; }
+    var rows = ckDosRows.filter(function (r) { return ckPrio === "alle" ? r.prio !== "afgehandeld" : r.prio === ckPrio; });
+    if (!rows.length) { box3.textContent = ckPrio === "alle" ? "Geen open dossiers." : "Geen dossiers met deze status."; return; }
     rows.forEach(function (r) {
       var g = document.createElement("div"); g.className = "grp"; g.textContent = r.name + (r.last ? "" : " (leeg)");
       var tag = document.createElement("span"); tag.className = "pr " + r.prio; tag.textContent = prioLabel(r.prio); g.appendChild(tag);
