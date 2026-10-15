@@ -85,7 +85,21 @@
   .rel .m { font-size:11px; color:var(--muted); }
   .rel .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .grp { font-size:11px; font-weight:600; color:var(--muted); margin:8px 0 2px; }
-  #ov { position:fixed; inset:0; background:var(--bg); padding:14px; overflow:auto; z-index:10; }
+  .overlay { position:fixed; inset:0; background:var(--bg); padding:14px; overflow:auto; z-index:10; }
+  .sug { border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; margin-bottom:6px; background:var(--soft); display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12px; }
+  .ck { border-top:1px solid var(--line); padding:6px 8px; margin:0 -8px; border-radius:var(--r); cursor:pointer; }
+  .ck:hover { background:var(--soft); }
+  .ck .m { font-size:11px; color:var(--muted); }
+  .ck .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ck .late { color:var(--danger); font-weight:600; }
+  .ckp.on { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  .pr { font-size:10px; font-weight:600; padding:1px 6px; border-radius:10px; border:1px solid var(--line); margin-left:6px; vertical-align:middle; }
+  .pr.hoog { color:var(--danger); border-color:var(--danger); }
+  .pr.laag { color:var(--muted); }
+  .dl { border-top:1px solid var(--line); padding:7px 0; }
+  .dl .meta { font-size:11px; color:var(--muted); }
+  .dl .txt { white-space:pre-wrap; margin-top:2px; }
+  .dl.sys .txt { color:var(--muted); font-size:12px; font-style:italic; }
   .ovhead { display:flex; justify-content:space-between; align-items:center; }
   .ovrow { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-top:1px solid var(--line); }
   .ovrow input { width:auto; margin-top:3px; accent-color:var(--accent); }
@@ -112,7 +126,10 @@
 <body>
   <div id="app" hidden>
     <div class="top">
-      <h1>Mailmaatje</h1>
+      <div class="row" style="justify-content:space-between">
+        <h1>Mailmaatje</h1>
+        <button class="btn lite" id="ckBtn">Overzicht</button>
+      </div>
       <details id="filterBox">
         <summary>Filter mailbox (<span id="filterCount">0</span> gekozen)</summary>
         <div class="rem" id="filterCats"></div>
@@ -154,12 +171,28 @@
 
     <label for="newNote">Notitie toevoegen</label>
     <textarea id="newNote" placeholder="Typ een notitie…"></textarea>
+    <div class="row" style="margin-top:6px" id="noteTargetRow" hidden>
+      <span class="foot" style="margin:0">Opslaan in</span>
+      <select id="noteTarget" style="flex:1"></select>
+    </div>
     <div class="row" style="justify-content:space-between;margin-top:6px">
       <span class="foot" id="space" style="margin:0"></span>
       <button class="btn" id="addNote">Toevoegen</button>
     </div>
 
-    <label>Notities</label>
+    <div id="dlogBox" hidden>
+      <div class="row" style="justify-content:space-between;margin-top:14px">
+        <label style="margin:0">Dossier — <span id="dlogName"></span></label>
+        <select id="dlogPrio" style="width:auto">
+          <option value="laag">Prio: Laag</option>
+          <option value="middel">Prio: Middel</option>
+          <option value="hoog">Prio: Hoog</option>
+        </select>
+      </div>
+      <div id="dlog"></div>
+    </div>
+
+    <label id="notesLabel">Notities</label>
     <div id="notes"></div>
 
     <details id="histBox" style="margin-top:12px">
@@ -183,10 +216,34 @@
     </div>
     <div class="foot">Alleen zichtbaar in deze mailbox. Wordt niet meegestuurd bij beantwoorden of doorsturen.</div>
   </div>
-  <div id="none" class="empty" hidden>Selecteer een e-mail.</div>
+  <div id="none" class="empty" hidden>Selecteer een e-mail, of open het <a href="#" id="noneCk">overzicht</a>.</div>
+
+  <!-- Overlay: cockpit / overzicht -->
+  <div id="ck" class="overlay" hidden>
+    <div class="ovhead">
+      <strong>Overzicht</strong>
+      <div class="row">
+        <button class="btn lite" id="ckSweep" title="Mails met een verzonden antwoord op Beantwoord zetten">Automatisch bijwerken</button>
+        <button class="btn lite" id="ckClose">Sluiten</button>
+      </div>
+    </div>
+    <div class="foot" id="ckState" style="margin-top:6px"></div>
+    <label>Deadlines (vlaggen)</label>
+    <div id="ckDead" class="empty">—</div>
+    <label>Blijven liggen (<span id="ckStaleName">niet gelezen</span>, ouder dan 2 dagen)</label>
+    <div id="ckStale" class="empty">—</div>
+    <label>Dossiers</label>
+    <div class="row" style="margin-bottom:6px">
+      <button class="btn lite ckp on" data-p="alle">Alle</button>
+      <button class="btn lite ckp" data-p="hoog">Hoog</button>
+      <button class="btn lite ckp" data-p="middel">Middel</button>
+      <button class="btn lite ckp" data-p="laag">Laag</button>
+    </div>
+    <div id="ckDos" class="empty">—</div>
+  </div>
 
   <!-- Overlay: dossier samenstellen -->
-  <div id="ov" hidden>
+  <div id="ov" class="overlay" hidden>
     <div class="ovhead">
       <strong>Dossier samenstellen</strong>
       <button class="btn lite" id="ovClose">Sluiten</button>
@@ -230,6 +287,12 @@
 
   var props = null, data = null, me = "", master = [], current = [], allCats = [];
   var DOSSIER_PREFIX = "Dossier: ";
+  var LOGFOLDER = "Mailmaatje";          // map in de mailbox met één item per dossier (het dossierlogboek)
+  var dlog = null;                       // { name, id, entries: [...] } van het huidige dossier
+  var logFolderId = null;
+  function findCat(re) { var c = allCats.filter(function (c) { return re.test(c.displayName); })[0]; return c ? c.displayName : ""; }
+  function staleCat() { return findCat(/niet gelezen|niet aan begonnen|nog niet behandeld/i); }
+  function answeredCat() { return findCat(/^beantwoord$/i) || findCat(/beantwoord/i); }
   function isDossierCat(n) { return typeof n === "string" && n.indexOf(DOSSIER_PREFIX) === 0; }
   var pca = null, account = null, graphMsg = null, loadSeq = 0;
 
@@ -244,16 +307,19 @@
   }
   function fmtD(ymd) { var p = ymd.split("-"); return p[2] + "-" + p[1] + "-" + p[0]; }
   function remLabel(m) { for (var i = 0; i < REMINDERS.length; i++) if (REMINDERS[i][0] === m) return REMINDERS[i][1]; return m + " min"; }
-  function addSys(text) { data.n.push({ t: new Date().toISOString(), a: me, x: text, k: "s" }); }
+  function addSys(text) {
+    data.n.push({ t: new Date().toISOString(), a: me, x: text, k: "s" });
+    if (dlog) dlogAppend({ t: new Date().toISOString(), a: me, x: text, k: "s", subj: (graphMsg && graphMsg.subject) || "" });
+  }
 
   // --- Laden van de mail --------------------------------------------------
   function load() {
     var item = Office.context.mailbox.item, seq = ++loadSeq;
-    if (!item) { $("app").hidden = true; $("none").hidden = false; return; }
+    if (!item) { $("app").hidden = true; $("none").hidden = false; openCockpit(); return; }
     $("none").hidden = true; $("app").hidden = false;
     $("subject").textContent = item.subject || "(geen onderwerp)";
     $("newNote").value = "";
-    $("related").textContent = "—"; $("dossier").textContent = "—"; lastRelated = []; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
+    $("related").textContent = "—"; $("dossier").textContent = "—"; lastRelated = []; dlog = null; $("dlogBox").hidden = true; $("noteTargetRow").hidden = true; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
     msg("Laden…");
     item.loadCustomPropertiesAsync(function (r) {
       if (seq !== loadSeq) return;
@@ -535,7 +601,7 @@
       if (filterSel.length && !$("filterList").children.length) runFilter();
       return currentMessage(token).then(function (m) {
         if (seq !== loadSeq) return;
-        return Promise.all([calendarState(token, m), relatedMails(token, m), dossierList(token, m)]);
+        return Promise.all([calendarState(token, m), relatedMails(token, m).then(function () { return suggestDossier(token, m); }), dossierList(token, m), autoAnswered(token, m)]);
       });
     }).catch(function () {
       if (seq !== loadSeq) return;
@@ -740,6 +806,7 @@
     var box = $("dossier"); var names = dossierNames(m);
     if (!names.length) { box.textContent = "Deze mail zit nog in geen dossier."; return Promise.resolve(); }
     box.textContent = "Laden…";
+    loadDlog(token, names[0]);
     return Promise.all(names.map(function (n) { return dossierQuery(token, n).catch(function () { return []; }); })).then(function (lists) {
       box.innerHTML = "";
       names.forEach(function (n, i) {
@@ -757,6 +824,198 @@
       });
     });
   }
+  // --- Dossier voorstellen: gerelateerde mails zitten al in een dossier ---------------------
+  function suggestDossier(token, m) {
+    var have = dossierNames(m), counts = {};
+    lastRelated.forEach(function (x) { (x.categories || []).filter(isDossierCat).forEach(function (c) { var n = c.slice(DOSSIER_PREFIX.length); if (have.indexOf(n) === -1) counts[n] = (counts[n] || 0) + 1; }); });
+    var names = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 3);
+    if (!names.length) return;
+    var box = $("dossier");
+    names.forEach(function (n) {
+      var el = document.createElement("div"); el.className = "sug";
+      var t = document.createElement("span"); t.textContent = "Lijkt bij dossier \u201c" + n + "\u201d te horen (" + counts[n] + " gerelateerde mail" + (counts[n] > 1 ? "s" : "") + ")";
+      var b = document.createElement("button"); b.className = "btn"; b.textContent = "Toevoegen";
+      b.onclick = function () {
+        b.disabled = true;
+        var cat = DOSSIER_PREFIX + n, cats = (m.categories || []).slice(); if (cats.indexOf(cat) === -1) cats.push(cat);
+        ensureMasterCategory(cat).then(function () { return graph("PATCH", "/me/messages/" + m.id, { categories: cats }, token); })
+          .then(function () { m.categories = cats; el.remove(); if (data) { addSys("Toegevoegd aan dossier '" + n + "'"); save("Toegevoegd aan dossier"); } loadCats(); return dossierList(token, m); })
+          .catch(function (e) { msg("Dossier toevoegen mislukt: " + e.message); b.disabled = false; });
+      };
+      el.appendChild(t); el.appendChild(b); box.insertBefore(el, box.firstChild);
+    });
+  }
+
+  // --- Automatisch "Beantwoord": is er na ontvangst een antwoord verzonden in dit gesprek? -----
+  function repliedAfter(token, m) {
+    return graph("GET", "/me/mailFolders/sentitems/messages?$filter=conversationId eq '" + m.conversationId.replace(/'/g, "''") + "'&$select=id,sentDateTime&$top=10", null, token)
+      .then(function (r) { return (r.value || []).some(function (x) { return x.sentDateTime > m.receivedDateTime; }); }).catch(function () { return false; });
+  }
+  function markAnswered(token, m) {
+    var ans = answeredCat(), stale = staleCat(), cats = (m.categories || []).slice(), changed = false;
+    if (ans && cats.indexOf(ans) === -1) { cats.push(ans); changed = true; }
+    if (stale && cats.indexOf(stale) !== -1) { cats = cats.filter(function (c) { return c !== stale; }); changed = true; }
+    if (!changed) return Promise.resolve(false);
+    return graph("PATCH", "/me/messages/" + m.id, { categories: cats }, token).then(function () { m.categories = cats; return true; });
+  }
+  function autoAnswered(token, m) {
+    var ans = answeredCat(); if (!ans || (m.categories || []).indexOf(ans) !== -1) return Promise.resolve();
+    return repliedAfter(token, m).then(function (yes) {
+      if (!yes) return;
+      return markAnswered(token, m).then(function (ch) {
+        if (!ch) return;
+        if (data) { addSys("Automatisch: " + ans + " gezet (antwoord verzonden)"); save("Antwoord gevonden: " + ans + " gezet"); }
+        loadCats();
+      });
+    }).catch(function () {});
+  }
+
+  // --- Dossierlogboek: één item per dossier in map "Mailmaatje" ---------------------------
+  function getLogFolder(token) {
+    if (logFolderId) return Promise.resolve(logFolderId);
+    return graph("GET", "/me/mailFolders?$filter=displayName eq '" + LOGFOLDER + "'&$select=id", null, token).then(function (r) {
+      if (r.value && r.value.length) { logFolderId = r.value[0].id; return logFolderId; }
+      return graph("POST", "/me/mailFolders", { displayName: LOGFOLDER, isHidden: true }, token).then(function (f) { logFolderId = f.id; return logFolderId; });
+    });
+  }
+  function dlogParse(body) {
+    try { var t = (body || "").replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").trim();
+      var j = JSON.parse(t); return { entries: Array.isArray(j.entries) ? j.entries : [], prio: j.prio || "middel" }; } catch (e) { return { entries: [], prio: "middel" }; }
+  }
+  var PRIO_IMP = { laag: "low", middel: "normal", hoog: "high" }, IMP_PRIO = { low: "laag", normal: "middel", high: "hoog" };
+  function prioLabel(p) { return { laag: "Laag", middel: "Middel", hoog: "Hoog" }[p] || "Middel"; }
+  function loadDlog(token, name) {
+    dlog = { name: name, id: null, entries: [], prio: "middel", loading: true };
+    renderDlog();
+    return getLogFolder(token).then(function (fid) {
+      return graph("GET", "/me/mailFolders/" + fid + "/messages?$filter=subject eq '" + (DOSSIER_PREFIX + name).replace(/'/g, "''") + "'&$select=id,body&$top=1", null, token);
+    }).then(function (r) {
+      if (!dlog || dlog.name !== name) return;
+      if (r.value && r.value.length) { dlog.id = r.value[0].id; var pd = dlogParse(r.value[0].body && r.value[0].body.content); dlog.entries = pd.entries; dlog.prio = pd.prio; }
+      dlog.loading = false; renderDlog();
+    }).catch(function (e) { if (dlog) { dlog.loading = false; dlog.error = e.message; renderDlog(); } });
+  }
+  function dlogSave(token) {
+    var body = { contentType: "text", content: JSON.stringify({ dossier: dlog.name, prio: dlog.prio || "middel", entries: dlog.entries }) };
+    var imp = PRIO_IMP[dlog.prio] || "normal";
+    if (dlog.id) return graph("PATCH", "/me/messages/" + dlog.id, { body: body, importance: imp }, token);
+    return getLogFolder(token).then(function (fid) {
+      return graph("POST", "/me/mailFolders/" + fid + "/messages", { subject: DOSSIER_PREFIX + dlog.name, body: body, importance: imp, isDraft: true }, token).then(function (mm) { dlog.id = mm.id; });
+    });
+  }
+  var dlogQueue = Promise.resolve();
+  function dlogAppend(entry) {
+    if (!dlog) return;
+    dlog.entries.push(entry); renderDlog();
+    dlogQueue = dlogQueue.then(function () { return getToken(false).then(function (token) { return dlogSave(token); }); })
+      .catch(function (e) { msg("Dossiernotitie opslaan mislukt: " + e.message); });
+  }
+  function renderDlog() {
+    var box = $("dlog"), wrap = $("dlogBox"), tr = $("noteTargetRow"), sel = $("noteTarget");
+    if (!dlog) { wrap.hidden = true; tr.hidden = true; $("notesLabel").textContent = "Notities"; return; }
+    wrap.hidden = false; $("dlogName").textContent = dlog.name; $("notesLabel").textContent = "Notities op deze mail";
+    $("dlogPrio").value = dlog.prio || "middel"; $("dlogPrio").disabled = !!dlog.loading;
+    tr.hidden = false; if (sel.options.length !== 2) { sel.innerHTML = ""; [["dossier", "Dossier"], ["mail", "Deze mail"]].forEach(function (o) { var e = document.createElement("option"); e.value = o[0]; e.textContent = o[1]; sel.appendChild(e); }); }
+    sel.options[0].textContent = "Dossier " + dlog.name;
+    box.innerHTML = "";
+    if (dlog.loading) { box.innerHTML = '<div class="empty">Laden…</div>'; return; }
+    if (dlog.error) { box.innerHTML = '<div class="empty">Logboek niet te laden: ' + esc(dlog.error) + '</div>'; return; }
+    if (!dlog.entries.length) { box.innerHTML = '<div class="empty">Nog geen dossiernotities.</div>'; return; }
+    dlog.entries.slice().reverse().forEach(function (n) {
+      var el = document.createElement("div"); el.className = "dl" + (n.k === "s" ? " sys" : "");
+      var meta = document.createElement("div"); meta.className = "meta"; meta.textContent = fmtDate(n.t) + " · " + (n.a || "") + (n.subj ? " · " + n.subj : "");
+      var txt = document.createElement("div"); txt.className = "txt"; txt.textContent = n.x;
+      el.appendChild(meta); el.appendChild(txt); box.appendChild(el);
+    });
+  }
+
+  // --- Cockpit: overzicht zonder mail ------------------------------------------------------
+  function ckRow(box, x, extra, late) {
+    var el = document.createElement("div"); el.className = "ck";
+    var mm = document.createElement("div"); mm.className = "m" + (late ? " late" : "");
+    var from = (x.from && x.from.emailAddress) ? (x.from.emailAddress.name || x.from.emailAddress.address) : "";
+    mm.textContent = (extra ? extra + " · " : "") + fmtDate(x.receivedDateTime) + " · " + from;
+    var sj = document.createElement("div"); sj.className = "s"; sj.textContent = x.subject || "(geen onderwerp)";
+    var cc = document.createElement("div"); cc.className = "m"; cc.textContent = (x.categories || []).join(", ");
+    el.appendChild(mm); el.appendChild(sj); if (cc.textContent) el.appendChild(cc);
+    el.onclick = function () { Office.context.mailbox.displayMessageForm(Office.context.mailbox.convertToEwsId(x.id, Office.MailboxEnums.RestVersion.v2_0)); };
+    box.appendChild(el);
+  }
+  function iso(d) { return d.toISOString().replace(/\.\d+Z$/, "Z"); }
+  function openCockpit() {
+    $("ck").hidden = false; $("ckState").textContent = "";
+    var stale = staleCat(); $("ckStaleName").textContent = stale || "geen categorie gevonden";
+    ["ckDead", "ckStale", "ckDos"].forEach(function (id) { $(id).textContent = "Laden…"; });
+    getToken(false).then(function (token) {
+      // Deadlines: gevlagde mails, gesorteerd op vervaldatum
+      graph("GET", "/me/messages?$filter=flag/flagStatus eq 'flagged'&$select=id,subject,from,receivedDateTime,categories,flag&$top=50", null, token).then(function (r) {
+        var list = (r.value || []).filter(function (x) { return x.flag && x.flag.dueDateTime; });
+        list.sort(function (a, b) { return a.flag.dueDateTime.dateTime < b.flag.dueDateTime.dateTime ? -1 : 1; });
+        var box = $("ckDead"); box.innerHTML = ""; if (!list.length) { box.textContent = "Geen openstaande deadlines."; return; }
+        var today = new Date().toISOString().slice(0, 10);
+        list.forEach(function (x) { var d = x.flag.dueDateTime.dateTime.slice(0, 10); ckRow(box, x, "Deadline " + fmtD(d), d < today); });
+      }).catch(function (e) { $("ckDead").textContent = "Niet te laden: " + e.message; });
+      // Blijven liggen
+      var box2 = $("ckStale");
+      if (!stale) { box2.textContent = "Geen categorie voor 'niet gelezen' in deze mailbox."; }
+      else {
+        var lim = new Date(); lim.setDate(lim.getDate() - 2);
+        graph("GET", "/me/messages?$filter=receivedDateTime le " + iso(lim) + " and categories/any(c:c eq '" + stale.replace(/'/g, "''") + "')&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,categories,conversationId&$top=50", null, token).then(function (r) {
+          ckStaleList = r.value || [];
+          box2.innerHTML = ""; if (!ckStaleList.length) { box2.textContent = "Niets blijft liggen."; return; }
+          ckStaleList.forEach(function (x) { ckRow(box2, x, "", false); });
+        }).catch(function (e) { box2.textContent = "Niet te laden: " + e.message; });
+      }
+      // Dossiers: laatste activiteit
+      var names = allCats.map(function (c) { return c.displayName; }).filter(isDossierCat).map(function (n) { return n.slice(DOSSIER_PREFIX.length); }).slice(0, 15);
+      var box3 = $("ckDos");
+      if (!names.length) { box3.textContent = "Nog geen dossiers. Maak er een via 'Dossier samenstellen' bij een mail."; return; }
+      var prios = {};
+      getLogFolder(token).then(function (fid) {
+        return graph("GET", "/me/mailFolders/" + fid + "/messages?$select=subject,importance&$top=100", null, token);
+      }).then(function (r) {
+        (r.value || []).forEach(function (x) { if (isDossierCat(x.subject)) prios[x.subject.slice(DOSSIER_PREFIX.length)] = IMP_PRIO[x.importance] || "middel"; });
+      }).catch(function () {}).then(function () {
+        return Promise.all(names.map(function (n) {
+          return graph("GET", "/me/messages?$filter=categories/any(c:c eq '" + (DOSSIER_PREFIX + n).replace(/'/g, "''") + "')&$select=id,subject,from,receivedDateTime,categories&$top=1", null, token)
+            .then(function (r) { return { name: n, prio: prios[n] || "middel", last: (r.value || [])[0] }; }).catch(function () { return { name: n, prio: prios[n] || "middel", last: null }; });
+        }));
+      }).then(function (rows) {
+        var rank = { hoog: 0, middel: 1, laag: 2 };
+        rows.sort(function (a, b) { if (rank[a.prio] !== rank[b.prio]) return rank[a.prio] - rank[b.prio]; return ((b.last && b.last.receivedDateTime) || "") < ((a.last && a.last.receivedDateTime) || "") ? -1 : 1; });
+        ckDosRows = rows; renderCkDos();
+      });
+    }).catch(function () { ["ckDead", "ckStale", "ckDos"].forEach(function (id) { $(id).textContent = "Eerst aanmelden (knop onderaan het paneel)."; }); });
+  }
+  var ckStaleList = [], ckDosRows = [], ckPrio = "alle";
+  function renderCkDos() {
+    var box3 = $("ckDos"); box3.innerHTML = "";
+    var rows = ckDosRows.filter(function (r) { return ckPrio === "alle" || r.prio === ckPrio; });
+    if (!rows.length) { box3.textContent = "Geen dossiers met deze prioriteit."; return; }
+    rows.forEach(function (r) {
+      var g = document.createElement("div"); g.className = "grp"; g.textContent = r.name + (r.last ? "" : " (leeg)");
+      var tag = document.createElement("span"); tag.className = "pr " + r.prio; tag.textContent = prioLabel(r.prio); g.appendChild(tag);
+      box3.appendChild(g);
+      if (r.last) ckRow(box3, r.last, "Laatste", false);
+    });
+  }
+  // Automatisch bijwerken: blijvende mails met een verzonden antwoord op Beantwoord zetten.
+  function ckSweep() {
+    var ans = answeredCat(); if (!ans) { $("ckState").textContent = "Geen categorie 'Beantwoord' in deze mailbox."; return; }
+    if (!ckStaleList.length) { $("ckState").textContent = "Niets om bij te werken."; return; }
+    $("ckSweep").disabled = true; $("ckState").textContent = "Controleren…";
+    var n = 0;
+    getToken(false).then(function (token) {
+      var chain = Promise.resolve();
+      ckStaleList.slice(0, 30).forEach(function (m) {
+        chain = chain.then(function () { return repliedAfter(token, m).then(function (yes) { if (yes) return markAnswered(token, m).then(function (ch) { if (ch) n++; }); }); });
+      });
+      return chain;
+    }).then(function () { $("ckState").textContent = n + " mail(s) op " + ans + " gezet."; if (n) openCockpit(); })
+      .catch(function (e) { $("ckState").textContent = "Bijwerken mislukt: " + e.message; })
+      .then(function () { $("ckSweep").disabled = false; });
+  }
+
   // Overlay
   var ovItems = {};   // id -> { msg, checked }
   function ovRender() {
@@ -877,8 +1136,29 @@
     });
     $("addNote").addEventListener("click", function () {
       var t = $("newNote").value.trim(); if (!t) return;
+      if (dlog && $("noteTarget").value === "dossier") {
+        dlogAppend({ t: new Date().toISOString(), a: me, x: t, subj: (graphMsg && graphMsg.subject) || "" });
+        $("newNote").value = ""; msg("Dossiernotitie toegevoegd"); return;
+      }
       data.n.push({ t: new Date().toISOString(), a: me, x: t });
       $("newNote").value = ""; save("Notitie toegevoegd");
+    });
+    $("ckBtn").addEventListener("click", openCockpit);
+    $("noneCk").addEventListener("click", function (e) { e.preventDefault(); openCockpit(); });
+    $("ckClose").addEventListener("click", function () { $("ck").hidden = true; });
+    $("ckSweep").addEventListener("click", ckSweep);
+    Array.prototype.forEach.call(document.querySelectorAll(".ckp"), function (b) {
+      b.addEventListener("click", function () {
+        ckPrio = b.getAttribute("data-p");
+        Array.prototype.forEach.call(document.querySelectorAll(".ckp"), function (x) { x.classList.toggle("on", x === b); });
+        renderCkDos();
+      });
+    });
+    $("dlogPrio").addEventListener("change", function () {
+      if (!dlog) return;
+      dlog.prio = this.value;
+      dlogAppend({ t: new Date().toISOString(), a: me, x: "Prioriteit dossier: " + prioLabel(dlog.prio), k: "s", subj: (graphMsg && graphMsg.subject) || "" });
+      if (data) { data.n.push({ t: new Date().toISOString(), a: me, x: "Prioriteit dossier '" + dlog.name + "': " + prioLabel(dlog.prio), k: "s" }); save("Prioriteit opgeslagen"); }
     });
     $("signIn").addEventListener("click", function () {
       $("authMsg").textContent = "Aanmelden…";
