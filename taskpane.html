@@ -153,7 +153,14 @@
     <div class="row">
       <input type="date" id="deadline">
       <input type="time" id="dtime" value="09:00">
-      <button class="btn lite" id="clearDeadline" title="Deadline wissen">Wis</button>
+      <button class="btn lite" id="clearDeadline" title="Deadline, herinneringen, vlag en agenda-items verwijderen">Verwijder</button>
+    </div>
+    <div class="row" id="clearAsk" hidden style="margin-top:6px;justify-content:space-between">
+      <span class="foot" style="margin:0">Deadline, herinneringen, vlag en agenda-items verwijderen?</span>
+      <span class="row">
+        <button class="btn" id="clearYes">Ja, verwijderen</button>
+        <button class="btn lite" id="clearNo">Annuleren</button>
+      </span>
     </div>
     <div class="warn" id="overdue"></div>
     <div class="foot" id="flagState" style="margin-top:4px"></div>
@@ -1141,7 +1148,26 @@
     });
     $("deadline").addEventListener("change", function () { data.d = this.value; save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen, vlag gezet"); }); });
     $("dtime").addEventListener("change", function () { data.t = this.value; save("Tijd opgeslagen", function () { syncFlag("Tijd opgeslagen, vlag bijgewerkt"); }); });
-    $("clearDeadline").addEventListener("click", function () { data.d = ""; data.t = ""; save("Deadline gewist", function () { syncFlag("Deadline gewist, vlag verwijderd"); }); });
+    $("clearDeadline").addEventListener("click", function () { $("clearAsk").hidden = false; });
+    $("clearNo").addEventListener("click", function () { $("clearAsk").hidden = true; });
+    $("clearYes").addEventListener("click", function () {
+      $("clearAsk").hidden = true;
+      var hadRem = data.r.length;
+      data.d = ""; data.t = ""; data.r = [];
+      addSys("Deadline verwijderd" + (hadRem ? " (incl. " + hadRem + " herinnering" + (hadRem > 1 ? "en" : "") + ")" : ""));
+      save("Deadline verwijderd", function () {
+        syncFlag("Deadline verwijderd, vlag weg");
+        // Agenda-items van deze mail opruimen (alleen als aangemeld)
+        getToken(false).then(function (token) {
+          return currentMessage(token).then(function (m) {
+            return removeEvents(token, m).then(function (n) {
+              if (n) { addSys("Uit agenda gehaald (" + n + " item" + (n !== 1 ? "s" : "") + ")"); save("Deadline en " + n + " agenda-item(s) verwijderd"); }
+              return calendarState(token, m);
+            });
+          });
+        }).catch(function () {});
+      });
+    });
     $("toCal").addEventListener("click", toCalendar);
     $("fromCal").addEventListener("click", fromCalendar);
     $("owner").addEventListener("change", function () {
