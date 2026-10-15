@@ -699,6 +699,12 @@
   }
 
   // --- Start -----------------------------------------------------------------------
+  // Pop-upvenster van MSAL: terug van Microsoft met een code in de hash. Niets doen; het paneel
+  // (de opener) leest de code uit en sluit dit venster zelf.
+  if (!isDialog() && window.opener && /(code|error)=/.test(location.hash)) {
+    document.body.innerHTML = '<div class="empty" style="padding:12px">Aanmelden afronden… Dit venster sluit vanzelf.</div>';
+    return;
+  }
   if (isDialog()) { runDialog(); return; }
   Office.onReady(function () {
     me = (Office.context.mailbox.userProfile && Office.context.mailbox.userProfile.displayName) || "";
