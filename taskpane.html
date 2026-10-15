@@ -153,22 +153,25 @@
     <div class="row">
       <input type="date" id="deadline">
       <input type="time" id="dtime" value="09:00">
-      <button class="btn lite" id="clearDeadline" title="Deadline, herinneringen, vlag en agenda-items verwijderen">Verwijder</button>
+    </div>
+    <details id="remBox" style="margin-top:6px">
+      <summary>Herinneringen (<span id="remCount">0</span> gekozen)</summary>
+      <div class="rem" id="rem"></div>
+    </details>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="saveDeadline">Opslaan</button>
+      <button class="btn lite" id="clearDeadline">Wis deadline</button>
     </div>
     <div class="row" id="clearAsk" hidden style="margin-top:6px;justify-content:space-between">
-      <span class="foot" style="margin:0">Deadline, herinneringen, vlag en agenda-items verwijderen?</span>
+      <span class="foot" style="margin:0">Deadline, herinneringen, vlag en agenda-items wissen?</span>
       <span class="row">
-        <button class="btn" id="clearYes">Ja, verwijderen</button>
+        <button class="btn" id="clearYes">Ja, wissen</button>
         <button class="btn lite" id="clearNo">Annuleren</button>
       </span>
     </div>
     <div class="warn" id="overdue"></div>
     <div class="foot" id="flagState" style="margin-top:4px"></div>
-    <details id="remBox">
-      <summary>Herinneringen (<span id="remCount">0</span> gekozen)</summary>
-      <div class="rem" id="rem"></div>
-    </details>
-    <div class="foot" id="calState" style="margin-top:5px"></div>
+    <div class="foot" id="calState" style="margin-top:2px"></div>
 
     <label for="owner">Verantwoordelijke</label>
     <input id="owner" list="ownerList" placeholder="Naam">
@@ -393,7 +396,7 @@
         if (c.checked) data.r.push(r[0]);
         data.r.sort(function (a, b) { return a - b; });
         $("remCount").textContent = data.r.length;
-        save("Herinneringen opgeslagen", function () { syncCalendar(); });
+        msg("Klik op Opslaan om de deadline vast te zetten.");
       };
       l.appendChild(c); l.appendChild(document.createTextNode(r[1])); box.appendChild(l);
     });
@@ -667,16 +670,13 @@
       return getToken(false).then(function (token) {
         return currentMessage(token).then(function (m) {
           return removeEvents(token, m).then(function (removed) {
-            if (!want) { if (removed) addSysQuiet("Agenda: " + removed + " item(s) verwijderd"); return calendarState(token, m); }
+            if (!want) { return calendarState(token, m); }
             var main = mkEvent("Deadline: " + subj, localDate(d, t), 30, rem[0], m);
             var chain = graph("POST", "/me/events", main, token);
             rem.slice(1).forEach(function (mins) {
               chain = chain.then(function () { return graph("POST", "/me/events", mkEvent("Herinnering (" + remLabel(mins) + " vooraf): " + subj, localDate(d, t, mins), 15, 0, m), token); });
             });
-            return chain.then(function () {
-              addSysQuiet("Agenda bijgewerkt: deadline " + fmtD(d) + " " + (t || "09:00") + ", herinnering " + rem.map(remLabel).join(", ") + " vooraf");
-              return calendarState(token, m);
-            });
+            return chain.then(function () { return calendarState(token, m); });
           });
         });
       });
@@ -1130,22 +1130,28 @@
       var c = e.target.getAttribute && e.target.getAttribute("data-c");
       if (c) toggleCat(c);   // nogmaals klikken = categorie weer verwijderen
     });
-    $("deadline").addEventListener("change", function () { data.d = this.value; save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen, vlag gezet"); syncCalendar(); }); });
-    $("dtime").addEventListener("change", function () { data.t = this.value; save("Tijd opgeslagen", function () { syncFlag("Tijd opgeslagen, vlag bijgewerkt"); syncCalendar(); }); });
+    $("deadline").addEventListener("change", function () { data.d = this.value; msg("Klik op Opslaan om de deadline vast te zetten."); });
+    $("dtime").addEventListener("change", function () { data.t = this.value; msg("Klik op Opslaan om de deadline vast te zetten."); });
+    $("saveDeadline").addEventListener("click", function () {
+      data.d = $("deadline").value; data.t = $("dtime").value;
+      if (!data.d) { msg("Vul eerst een datum in."); return; }
+      addSys("Deadline " + fmtD(data.d) + " " + (data.t || "09:00") + (data.r.length ? ", herinnering " + data.r.map(remLabel).join(", ") + " vooraf" : ", zonder herinneringen"));
+      save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen: vlag gezet" + (data.r.length ? ", agenda bijgewerkt" : "")); syncCalendar(); });
+    });
     $("clearDeadline").addEventListener("click", function () { $("clearAsk").hidden = false; });
     $("clearNo").addEventListener("click", function () { $("clearAsk").hidden = true; });
     $("clearYes").addEventListener("click", function () {
       $("clearAsk").hidden = true;
       var hadRem = data.r.length;
       data.d = ""; data.t = ""; data.r = [];
-      addSys("Deadline verwijderd" + (hadRem ? " (incl. " + hadRem + " herinnering" + (hadRem > 1 ? "en" : "") + ")" : ""));
-      save("Deadline verwijderd", function () {
-        syncFlag("Deadline verwijderd, vlag weg");
+      addSys("Deadline gewist" + (hadRem ? " (incl. " + hadRem + " herinnering" + (hadRem > 1 ? "en" : "") + ")" : ""));
+      save("Deadline gewist", function () {
+        syncFlag("Deadline gewist, vlag weg");
         // Agenda-items van deze mail opruimen (alleen als aangemeld)
         getToken(false).then(function (token) {
           return currentMessage(token).then(function (m) {
             return removeEvents(token, m).then(function (n) {
-              if (n) { addSys("Uit agenda gehaald (" + n + " item" + (n !== 1 ? "s" : "") + ")"); save("Deadline en " + n + " agenda-item(s) verwijderd"); }
+              if (n) { addSys("Uit agenda gehaald (" + n + " item" + (n !== 1 ? "s" : "") + ")"); save("Deadline gewist, " + n + " agenda-item(s) verwijderd"); }
               return calendarState(token, m);
             });
           });
