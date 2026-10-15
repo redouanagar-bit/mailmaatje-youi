@@ -168,10 +168,6 @@
       <summary>Herinneringen (<span id="remCount">0</span> gekozen)</summary>
       <div class="rem" id="rem"></div>
     </details>
-    <div class="row" style="margin-top:6px">
-      <button class="btn" id="toCal">In agenda zetten</button>
-      <button class="btn lite" id="fromCal" hidden>Uit agenda halen</button>
-    </div>
     <div class="foot" id="calState" style="margin-top:5px"></div>
 
     <label for="owner">Verantwoordelijke</label>
@@ -330,7 +326,7 @@
     $("none").hidden = true; $("app").hidden = false;
     $("subject").textContent = item.subject || "(geen onderwerp)";
     $("newNote").value = "";
-    $("related").textContent = "—"; $("dossier").textContent = "—"; $("flagState").textContent = ""; lastRelated = []; dlog = null; $("dlogBox").hidden = true; $("noteTargetRow").hidden = true; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
+    $("related").textContent = "—"; $("dossier").textContent = "—"; $("flagState").textContent = ""; lastRelated = []; dlog = null; $("dlogBox").hidden = true; $("noteTargetRow").hidden = true; $("calState").textContent = ""; graphMsg = null;
     msg("Laden…");
     item.loadCustomPropertiesAsync(function (r) {
       if (seq !== loadSeq) return;
@@ -397,7 +393,7 @@
         if (c.checked) data.r.push(r[0]);
         data.r.sort(function (a, b) { return a - b; });
         $("remCount").textContent = data.r.length;
-        save("Herinneringen opgeslagen");
+        save("Herinneringen opgeslagen", function () { syncCalendar(); });
       };
       l.appendChild(c); l.appendChild(document.createTextNode(r[1])); box.appendChild(l);
     });
@@ -628,8 +624,7 @@
   function calendarState(token, m) {
     return graph("GET", evFilter(m), null, token).then(function (r) {
       var n = (r.value || []).length;
-      $("calState").textContent = n ? "In agenda: " + n + " item" + (n > 1 ? "s" : "") : "Niet in agenda";
-      $("fromCal").hidden = !n;
+      $("calState").textContent = n ? "Agenda: " + n + " item" + (n > 1 ? "s" : "") + " (deadline + herinneringen)" : (data && data.d ? "Agenda: geen herinneringen aangevinkt" : "");
     }).catch(function (e) { $("calState").textContent = "Agenda: " + e.message; });
   }
   function localDate(ymd, hm, minusMin) {
@@ -662,44 +657,33 @@
       return chain.then(function () { return list.length; });
     });
   }
-  function toCalendar() {
-    if (!data.d) { msg("Vul eerst een deadline in."); return; }
-    $("toCal").disabled = true; msg("Agenda bijwerken…");
+  // Agenda automatisch: bij deadline + aangevinkte herinneringen staan de items in de agenda; anders niet.
+  var calQueue = Promise.resolve();
+  function syncCalendar() {
+    if (!pca || !data) return;
     var subj = Office.context.mailbox.item.subject || "(geen onderwerp)";
-    getToken(true).then(function (token) {
-      return currentMessage(token).then(function (m) {
-        return removeEvents(token, m).then(function () {   // eerst oude items van deze mail weg, dan opnieuw aanmaken
-          var rem = data.r.slice().sort(function (a, b) { return a - b; });
-          var main = mkEvent("Deadline: " + subj, localDate(data.d, data.t), 30, rem.length ? rem[0] : 15, m);
-          var chain = graph("POST", "/me/events", main, token), count = 1;
-          rem.slice(1).forEach(function (mins) {
-            chain = chain.then(function () {
-              count++;
-              return graph("POST", "/me/events", mkEvent("Herinnering (" + remLabel(mins) + " vooraf): " + subj, localDate(data.d, data.t, mins), 15, 0, m), token);
+    var want = !!(data.d && data.r.length), d = data.d, t = data.t, rem = data.r.slice().sort(function (a, b) { return a - b; });
+    calQueue = calQueue.then(function () {
+      return getToken(false).then(function (token) {
+        return currentMessage(token).then(function (m) {
+          return removeEvents(token, m).then(function (removed) {
+            if (!want) { if (removed) addSysQuiet("Agenda: " + removed + " item(s) verwijderd"); return calendarState(token, m); }
+            var main = mkEvent("Deadline: " + subj, localDate(d, t), 30, rem[0], m);
+            var chain = graph("POST", "/me/events", main, token);
+            rem.slice(1).forEach(function (mins) {
+              chain = chain.then(function () { return graph("POST", "/me/events", mkEvent("Herinnering (" + remLabel(mins) + " vooraf): " + subj, localDate(d, t, mins), 15, 0, m), token); });
+            });
+            return chain.then(function () {
+              addSysQuiet("Agenda bijgewerkt: deadline " + fmtD(d) + " " + (t || "09:00") + ", herinnering " + rem.map(remLabel).join(", ") + " vooraf");
+              return calendarState(token, m);
             });
           });
-          return chain.then(function () { return count; });
-        }).then(function (count) {
-          addSys("In agenda gezet: deadline " + fmtD(data.d) + " " + (data.t || "09:00") + (data.r.length ? ", herinnering " + data.r.map(remLabel).join(", ") + " vooraf" : ""));
-          save("In agenda gezet (" + count + " item" + (count > 1 ? "s" : "") + ")");
-          return calendarState(token, m);
         });
       });
-    }).catch(function (e) { msg("Agenda mislukt: " + (e.message || e)); })
-      .then(function () { $("toCal").disabled = false; });
+    }).catch(function (e) { $("calState").textContent = "Agenda: " + (e.message || e); });
   }
-  function fromCalendar() {
-    $("fromCal").disabled = true; msg("Uit agenda halen…");
-    getToken(true).then(function (token) {
-      return currentMessage(token).then(function (m) {
-        return removeEvents(token, m).then(function (n) {
-          addSys("Uit agenda gehaald (" + n + " item" + (n !== 1 ? "s" : "") + ")");
-          save("Uit agenda gehaald"); return calendarState(token, m);
-        });
-      });
-    }).catch(function (e) { msg("Agenda mislukt: " + (e.message || e)); })
-      .then(function () { $("fromCal").disabled = false; });
-  }
+  // Systeemregel zonder directe save (wordt bij de volgende save meegenomen; anders nu opslaan).
+  function addSysQuiet(text) { addSys(text); save(); }
 
   // --- Outlook-vlag (Opvolgen): deadline = vervaldatum van de vlag, Afgerond = voltooid ----------
   var DONE_CATEGORY = "Afgerond";
@@ -1146,8 +1130,8 @@
       var c = e.target.getAttribute && e.target.getAttribute("data-c");
       if (c) toggleCat(c);   // nogmaals klikken = categorie weer verwijderen
     });
-    $("deadline").addEventListener("change", function () { data.d = this.value; save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen, vlag gezet"); }); });
-    $("dtime").addEventListener("change", function () { data.t = this.value; save("Tijd opgeslagen", function () { syncFlag("Tijd opgeslagen, vlag bijgewerkt"); }); });
+    $("deadline").addEventListener("change", function () { data.d = this.value; save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen, vlag gezet"); syncCalendar(); }); });
+    $("dtime").addEventListener("change", function () { data.t = this.value; save("Tijd opgeslagen", function () { syncFlag("Tijd opgeslagen, vlag bijgewerkt"); syncCalendar(); }); });
     $("clearDeadline").addEventListener("click", function () { $("clearAsk").hidden = false; });
     $("clearNo").addEventListener("click", function () { $("clearAsk").hidden = true; });
     $("clearYes").addEventListener("click", function () {
@@ -1168,8 +1152,6 @@
         }).catch(function () {});
       });
     });
-    $("toCal").addEventListener("click", toCalendar);
-    $("fromCal").addEventListener("click", fromCalendar);
     $("owner").addEventListener("change", function () {
       data.v = this.value.trim(); rememberOwner(data.v); save("Verantwoordelijke opgeslagen");
     });
