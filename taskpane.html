@@ -85,6 +85,17 @@
   .rel .m { font-size:11px; color:var(--muted); }
   .rel .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .grp { font-size:11px; font-weight:600; color:var(--muted); margin:8px 0 2px; }
+  #ov { position:fixed; inset:0; background:var(--bg); padding:14px; overflow:auto; z-index:10; }
+  .ovhead { display:flex; justify-content:space-between; align-items:center; }
+  .ovrow { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-top:1px solid var(--line); }
+  .ovrow input { width:auto; margin-top:3px; accent-color:var(--accent); }
+  .ovrow .b { flex:1; min-width:0; }
+  .ovrow .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ovrow .m, .ovrow .c { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dos { border-top:1px solid var(--line); padding:6px 8px; margin:0 -8px; border-radius:var(--r); cursor:pointer; }
+  .dos:hover { background:var(--soft); }
+  .dos .m { font-size:11px; color:var(--muted); }
+  .dos .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .top { padding-bottom:10px; border-bottom:1px solid var(--line); }
   .top details { margin-top:6px; }
   #filterList { margin-top:4px; max-height:260px; overflow:auto; }
@@ -156,6 +167,12 @@
       <div id="hist"></div>
     </details>
 
+    <label>Dossier</label>
+    <div id="dossier" class="empty">—</div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn lite" id="dossierBtn">Dossier samenstellen</button>
+    </div>
+
     <label>Gerelateerde mails</label>
     <div id="related" class="empty">—</div>
 
@@ -167,6 +184,28 @@
     <div class="foot">Alleen zichtbaar in deze mailbox. Wordt niet meegestuurd bij beantwoorden of doorsturen.</div>
   </div>
   <div id="none" class="empty" hidden>Selecteer een e-mail.</div>
+
+  <!-- Overlay: dossier samenstellen -->
+  <div id="ov" hidden>
+    <div class="ovhead">
+      <strong>Dossier samenstellen</strong>
+      <button class="btn lite" id="ovClose">Sluiten</button>
+    </div>
+    <label for="ovName" style="margin-top:8px">Dossiernaam</label>
+    <input id="ovName" list="ovNames" placeholder="Bijv. Zorgbureau facturen">
+    <datalist id="ovNames"></datalist>
+    <label for="ovSearch">Zoeken in mailbox</label>
+    <div class="row">
+      <input id="ovSearch" placeholder="Afzender, onderwerp of trefwoord">
+      <button class="btn lite" id="ovSearchBtn">Zoek</button>
+    </div>
+    <div class="foot" id="ovState" style="margin-top:6px"></div>
+    <div id="ovList"></div>
+    <div class="row" style="justify-content:space-between;margin-top:10px">
+      <span class="foot" id="ovCount" style="margin:0">0 gekozen</span>
+      <button class="btn" id="ovSave">Opslaan</button>
+    </div>
+  </div>
 
 <script>
 (function () {
@@ -189,7 +228,9 @@
   // Outlook-presetkleuren (Preset0..Preset24) naar hex, alleen voor het bolletje voor de naam.
   var COLORS = ["#e74856","#ff8c00","#a0522d","#ffd700","#107c10","#008272","#808000","#0078d4","#8764b8","#c239b3","#4f6bed","#3a3f5c","#808080","#505050","#000000","#a4262c","#ca5010","#5c2e0e","#986f0b","#0b6a0b","#005b5b","#498205","#004e8c","#5c2d91","#881798"];
 
-  var props = null, data = null, me = "", master = [], current = [];
+  var props = null, data = null, me = "", master = [], current = [], allCats = [];
+  var DOSSIER_PREFIX = "Dossier: ";
+  function isDossierCat(n) { return typeof n === "string" && n.indexOf(DOSSIER_PREFIX) === 0; }
   var pca = null, account = null, graphMsg = null, loadSeq = 0;
 
   function $(id) { return document.getElementById(id); }
@@ -212,7 +253,7 @@
     $("none").hidden = true; $("app").hidden = false;
     $("subject").textContent = item.subject || "(geen onderwerp)";
     $("newNote").value = "";
-    $("related").textContent = "—"; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
+    $("related").textContent = "—"; $("dossier").textContent = "—"; lastRelated = []; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
     msg("Laden…");
     item.loadCustomPropertiesAsync(function (r) {
       if (seq !== loadSeq) return;
@@ -326,7 +367,8 @@
     if (!catsSupported()) { box.innerHTML = ""; note.hidden = false; note.textContent = "Categorieën niet beschikbaar in deze Outlook-versie."; return; }
     Office.context.mailbox.masterCategories.getAsync(function (r) {
       if (r.status !== Office.AsyncResultStatus.Succeeded) { note.hidden = false; note.textContent = "Categorielijst niet te lezen: " + r.error.message; return; }
-      master = (r.value || []).filter(function (c) { return c.displayName !== CATEGORY; }).slice(0, MAXCATS);
+      allCats = r.value || [];
+      master = allCats.filter(function (c) { return c.displayName !== CATEGORY && !isDossierCat(c.displayName); }).slice(0, MAXCATS);
       Office.context.mailbox.item.categories.getAsync(function (r2) {
         current = (r2.status === Office.AsyncResultStatus.Succeeded && r2.value) ? r2.value.map(function (c) { return c.displayName; }) : [];
         renderCats();
@@ -480,7 +522,7 @@
   // Gegevens van de huidige mail via Graph (één keer per mail).
   function currentMessage(token) {
     if (graphMsg) return Promise.resolve(graphMsg);
-    return graph("GET", "/me/messages/" + restId() + "?$select=id,subject,conversationId,internetMessageId,webLink,from,receivedDateTime", null, token)
+    return graph("GET", "/me/messages/" + restId() + "?$select=id,subject,conversationId,internetMessageId,webLink,from,receivedDateTime,categories", null, token)
       .then(function (m) { graphMsg = m; return m; });
   }
 
@@ -493,7 +535,7 @@
       if (filterSel.length && !$("filterList").children.length) runFilter();
       return currentMessage(token).then(function (m) {
         if (seq !== loadSeq) return;
-        return Promise.all([calendarState(token, m), relatedMails(token, m)]);
+        return Promise.all([calendarState(token, m), relatedMails(token, m), dossierList(token, m)]);
       });
     }).catch(function () {
       if (seq !== loadSeq) return;
@@ -669,15 +711,135 @@
     var subj = cleanSubject(m.subject);
     var q1 = graph("GET", "/me/messages?$filter=conversationId eq '" + m.conversationId.replace(/'/g, "''") + "'&$select=id,subject,from,receivedDateTime&$top=25", null, token).catch(function () { return { value: [] }; });
     var q2 = subj ? graph("GET", "/me/messages?$search=" + encodeURIComponent('"subject:' + subj.replace(/"/g, "") + '"') + "&$select=id,subject,from,receivedDateTime,conversationId&$top=25", null, token).catch(function () { return { value: [] }; }) : Promise.resolve({ value: [] });
-    return Promise.all([q1, q2]).then(function (res) {
+    var addr = (m.from && m.from.emailAddress && m.from.emailAddress.address) || "";
+    var since = new Date(); since.setDate(since.getDate() - 90);
+    var q3 = addr ? graph("GET", "/me/messages?$filter=receivedDateTime ge " + since.toISOString().replace(/\.\d+Z$/, "Z") + " and from/emailAddress/address eq '" + addr.replace(/'/g, "''") + "'&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,categories&$top=15", null, token).catch(function () { return { value: [] }; }) : Promise.resolve({ value: [] });
+    return Promise.all([q1, q2, q3]).then(function (res) {
       var seen = {}; seen[m.id] = true;
       var conv = (res[0].value || []).filter(function (x) { if (seen[x.id]) return false; seen[x.id] = true; return true; });
       var same = (res[1].value || []).filter(function (x) { if (seen[x.id]) return false; seen[x.id] = true; return cleanSubject(x.subject).toLowerCase() === subj.toLowerCase(); });
+      var sender = (res[2].value || []).filter(function (x) { if (seen[x.id]) return false; seen[x.id] = true; return true; });
+      lastRelated = conv.concat(same, sender);
       box.innerHTML = "";
-      if (!conv.length && !same.length) { box.textContent = "Geen andere mails gevonden."; return; }
+      if (!conv.length && !same.length && !sender.length) { box.textContent = "Geen andere mails gevonden."; return; }
       if (conv.length) { addGroup(box, "Zelfde gesprek", conv); }
       if (same.length) { addGroup(box, "Zelfde onderwerp", same); }
+      if (sender.length) { addGroup(box, "Zelfde afzender (90 dagen)", sender); }
     });
+  }
+  var lastRelated = [];
+
+  // --- Dossier: categorie "Dossier: <naam>" op een groep mails -----------------------------
+  function dossierNames(m) { return (m.categories || []).filter(isDossierCat).map(function (c) { return c.slice(DOSSIER_PREFIX.length); }); }
+  function dossierQuery(token, name) {
+    var since = new Date(); since.setDate(since.getDate() - 730);
+    return graph("GET", "/me/messages?$filter=receivedDateTime ge " + since.toISOString().replace(/\.\d+Z$/, "Z") + " and categories/any(c:c eq '" + (DOSSIER_PREFIX + name).replace(/'/g, "''") + "')&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,categories&$top=100", null, token)
+      .then(function (r) { return r.value || []; });
+  }
+  function dossierList(token, m) {
+    var box = $("dossier"); var names = dossierNames(m);
+    if (!names.length) { box.textContent = "Deze mail zit nog in geen dossier."; return Promise.resolve(); }
+    box.textContent = "Laden…";
+    return Promise.all(names.map(function (n) { return dossierQuery(token, n).catch(function () { return []; }); })).then(function (lists) {
+      box.innerHTML = "";
+      names.forEach(function (n, i) {
+        var g = document.createElement("div"); g.className = "grp"; g.textContent = n + " (" + lists[i].length + ")"; box.appendChild(g);
+        lists[i].forEach(function (x) {
+          var el = document.createElement("div"); el.className = "dos" + (x.id === m.id ? " cur" : "");
+          var mm = document.createElement("div"); mm.className = "m";
+          var from = (x.from && x.from.emailAddress) ? (x.from.emailAddress.name || x.from.emailAddress.address) : "";
+          mm.textContent = fmtDate(x.receivedDateTime) + " · " + from + (x.id === m.id ? " · (deze mail)" : "");
+          var sj = document.createElement("div"); sj.className = "s"; sj.textContent = x.subject || "(geen onderwerp)";
+          el.appendChild(mm); el.appendChild(sj);
+          if (x.id !== m.id) el.onclick = function () { Office.context.mailbox.displayMessageForm(Office.context.mailbox.convertToEwsId(x.id, Office.MailboxEnums.RestVersion.v2_0)); };
+          box.appendChild(el);
+        });
+      });
+    });
+  }
+  // Overlay
+  var ovItems = {};   // id -> { msg, checked }
+  function ovRender() {
+    var list = $("ovList"); list.innerHTML = "";
+    var ids = Object.keys(ovItems);
+    ids.sort(function (a, b) { return ovItems[a].msg.receivedDateTime < ovItems[b].msg.receivedDateTime ? 1 : -1; });
+    var n = 0;
+    ids.forEach(function (id) {
+      var it = ovItems[id], x = it.msg; if (it.checked) n++;
+      var row = document.createElement("label"); row.className = "ovrow";
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = it.checked;
+      cb.onchange = function () { it.checked = cb.checked; $("ovCount").textContent = Object.keys(ovItems).filter(function (k) { return ovItems[k].checked; }).length + " gekozen"; };
+      var b = document.createElement("div"); b.className = "b";
+      var from = (x.from && x.from.emailAddress) ? (x.from.emailAddress.name || x.from.emailAddress.address) : "";
+      var mm = document.createElement("div"); mm.className = "m"; mm.textContent = fmtDate(x.receivedDateTime) + " · " + from + (it.src ? " · " + it.src : "");
+      var sj = document.createElement("div"); sj.className = "s"; sj.textContent = x.subject || "(geen onderwerp)";
+      var cc = document.createElement("div"); cc.className = "c"; cc.textContent = (x.categories || []).join(", ");
+      b.appendChild(mm); b.appendChild(sj); if (cc.textContent) b.appendChild(cc);
+      row.appendChild(cb); row.appendChild(b); list.appendChild(row);
+    });
+    $("ovCount").textContent = n + " gekozen";
+  }
+  function ovAdd(list, src, checked) {
+    list.forEach(function (x) { if (!ovItems[x.id]) ovItems[x.id] = { msg: x, checked: !!checked, src: src }; else if (checked) ovItems[x.id].checked = true; });
+  }
+  function openDossier() {
+    if (!graphMsg) { msg("Eerst aanmelden."); return; }
+    var m = graphMsg, names = dossierNames(m);
+    ovItems = {}; ovAdd([m], "deze mail", true); ovAdd(lastRelated, "gerelateerd", false);
+    $("ovName").value = names[0] || "";
+    var dl = $("ovNames"); dl.innerHTML = "";
+    allCats.map(function (c) { return c.displayName; }).filter(isDossierCat).forEach(function (n) { var o = document.createElement("option"); o.value = n.slice(DOSSIER_PREFIX.length); dl.appendChild(o); });
+    $("ovSearch").value = ""; $("ovState").textContent = "";
+    $("ov").hidden = false; ovRender();
+    if (names[0]) {   // bestaande dossiermails ophalen en aanvinken
+      getToken(false).then(function (token) { return dossierQuery(token, names[0]); })
+        .then(function (list) { ovAdd(list, "in dossier", true); ovRender(); }).catch(function () {});
+    }
+  }
+  function ovSearch() {
+    var q = $("ovSearch").value.trim(); if (!q) return;
+    $("ovState").textContent = "Zoeken…";
+    getToken(false).then(function (token) {
+      return graph("GET", "/me/messages?$search=" + encodeURIComponent('"' + q.replace(/"/g, "") + '"') + "&$select=id,subject,from,receivedDateTime,categories&$top=25", null, token);
+    }).then(function (r) {
+      var list = r.value || []; ovAdd(list, "zoekresultaat", false); ovRender();
+      $("ovState").textContent = list.length + " gevonden, toegevoegd aan de lijst";
+    }).catch(function (e) { $("ovState").textContent = "Zoeken mislukt: " + e.message; });
+  }
+  function ensureMasterCategory(name) {
+    return new Promise(function (resolve) {
+      if (allCats.some(function (c) { return c.displayName === name; })) { resolve(); return; }
+      Office.context.mailbox.masterCategories.addAsync([{ displayName: name, color: Office.MailboxEnums.CategoryColor.Preset7 }], function () {
+        allCats.push({ displayName: name, color: "Preset7" }); resolve();
+      });
+    });
+  }
+  function ovSave() {
+    var name = $("ovName").value.trim();
+    if (!name) { $("ovState").textContent = "Vul een dossiernaam in."; return; }
+    var cat = DOSSIER_PREFIX + name, ids = Object.keys(ovItems);
+    $("ovSave").disabled = true; $("ovState").textContent = "Opslaan…";
+    var added = 0, removed = 0;
+    getToken(false).then(function (token) {
+      return ensureMasterCategory(cat).then(function () {
+        var chain = Promise.resolve();
+        ids.forEach(function (id) {
+          var it = ovItems[id], cats = (it.msg.categories || []).slice(), has = cats.indexOf(cat) !== -1;
+          if (it.checked && !has) { cats.push(cat); added++; }
+          else if (!it.checked && has) { cats = cats.filter(function (c) { return c !== cat; }); removed++; }
+          else return;
+          chain = chain.then(function () { return graph("PATCH", "/me/messages/" + id, { categories: cats }, token).then(function () { it.msg.categories = cats; }); });
+        });
+        return chain;
+      }).then(function () {
+        $("ovState").textContent = "Opgeslagen: " + added + " toegevoegd, " + removed + " verwijderd.";
+        $("ov").hidden = true;
+        if (data) { addSys("Dossier '" + name + "': " + added + " mail(s) toegevoegd" + (removed ? ", " + removed + " verwijderd" : "")); save("Dossier opgeslagen"); }
+        graphMsg = null; loadCats();
+        return currentMessage(token).then(function (m) { return dossierList(token, m); });
+      });
+    }).catch(function (e) { $("ovState").textContent = "Opslaan mislukt: " + e.message; })
+      .then(function () { $("ovSave").disabled = false; });
   }
   function addGroup(box, title, list) {
     var g = document.createElement("div"); g.className = "grp"; g.textContent = title; box.appendChild(g);
@@ -723,6 +885,11 @@
       getToken(true).then(function () { $("auth").hidden = true; graphRefresh(loadSeq); runFilter(); })
         .catch(function (e) { $("authMsg").textContent = "Aanmelden mislukt: " + (e.message || e); });
     });
+    $("dossierBtn").addEventListener("click", openDossier);
+    $("ovClose").addEventListener("click", function () { $("ov").hidden = true; });
+    $("ovSearchBtn").addEventListener("click", ovSearch);
+    $("ovSearch").addEventListener("keydown", function (e) { if (e.key === "Enter") ovSearch(); });
+    $("ovSave").addEventListener("click", ovSave);
     loadOwners(); loadFilterSel();
     $("filterClear").addEventListener("click", function () { filterSel = []; saveFilterSel(); renderFilterCats(); runFilter(); });
     // Bij vastgezet (gepind) paneel: opnieuw laden als je een andere mail selecteert.
