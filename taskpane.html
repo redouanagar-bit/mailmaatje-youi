@@ -453,10 +453,18 @@
     return silent.then(function (r) { account = r.account; return r.accessToken; })
       .catch(function (e) {
         if (!interactive) throw e;
-        return interactiveLogin().then(function () {
-          if (dlgToken && dlgToken.token) return dlgToken.token;
-          return getToken(false);
-        });
+        // Eerst een gewoon pop-upvenster (zelfde oorsprong, werkt ondanks opslagscheiding in Chrome);
+        // lukt dat niet (pop-up geblokkeerd), dan het Office-dialoogvenster.
+        return pca.acquireTokenPopup({ scopes: SCOPES, loginHint: userHint(), prompt: "select_account" })
+          .then(function (r) { account = r.account; return r.accessToken; })
+          .catch(function (e2) {
+            var code = (e2 && e2.errorCode) || "";
+            if (!/popup|user_cancelled|interaction_in_progress/i.test(code)) throw e2;
+            return interactiveLogin().then(function () {
+              if (dlgToken && dlgToken.token) return dlgToken.token;
+              return getToken(false);
+            });
+          });
       });
   }
   function graph(method, path, body, token) {
