@@ -15,7 +15,6 @@
 })();
 </script>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@5.25.1/lib/msal-browser.min.js"></script>
 <style>
   :root { --fg:#242424; --muted:#616161; --line:#e0e0e0; --bg:#ffffff; --soft:#f5f5f5; --hover:#ebebeb;
           --accent:#0f6cbd; --accent-hover:#115ea3; --danger:#c50f1f; --r:6px; }
@@ -387,85 +386,84 @@
   }
 
   // --- Microsoft Graph: aanmelden -----------------------------------------------
-  // Stil (refresh token in localStorage) waar mogelijk; anders een Office-dialoogvenster dat de
-  // Microsoft-aanmelding doet en daarna de tokens in dezelfde localStorage zet.
-  var DIALOG_FLAG = "mn_dialog";
-  function msalConfig() {
-    return { auth: { clientId: CLIENT_ID, authority: "https://login.microsoftonline.com/" + TENANT_ID,
-      redirectUri: location.origin + location.pathname, navigateToLoginRequestUrl: false },
-      cache: { cacheLocation: "localStorage" } };
+  // Eigen OAuth2-flow met PKCE (zonder MSAL): Outlook opent pop-ups afgeschermd, waardoor MSAL het
+  // venster niet kan uitlezen. Hier stuurt het pop-upvenster de code via postMessage naar het paneel,
+  // dat de code inwisselt voor tokens. Tokens staan in sessionStorage van het paneel.
+  var AUTH = "https://login.microsoftonline.com/" + TENANT_ID + "/oauth2/v2.0";
+  var SCOPE_STR = SCOPES.concat(["openid", "profile", "offline_access"]).join(" ");
+  var tokens = null;   // { access, refresh, exp }
+  var pendingAuth = null;
+  function loadTokens() { try { tokens = JSON.parse(sessionStorage.getItem("mn_tokens") || "null"); } catch (e) { tokens = null; } }
+  function saveTokens() { try { if (tokens) sessionStorage.setItem("mn_tokens", JSON.stringify(tokens)); else sessionStorage.removeItem("mn_tokens"); } catch (e) {} }
+  function b64url(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+  function randomString(n) { var a = new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
+  function sha256(str) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str)).then(b64url); }
+  function redirectUri() { return location.origin + location.pathname; }
+  function tokenRequest(params) {
+    var body = Object.keys(params).map(function (k) { return encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); }).join("&");
+    return fetch(AUTH + "/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok || j.error) throw new Error(j.error_description || j.error || r.status); return j; }); })
+      .then(function (j) {
+        tokens = { access: j.access_token, refresh: j.refresh_token || (tokens && tokens.refresh) || "", exp: Date.now() + (j.expires_in || 3600) * 1000 };
+        saveTokens(); return tokens.access;
+      });
   }
   function initAuth() {
     if (!CLIENT_ID) { $("authMsg").textContent = "Agenda, vlag en filter zijn voor deze mailbox nog niet ingericht (geen app-registratie)."; $("auth").hidden = false; $("signIn").hidden = true; return Promise.resolve(); }
-    if (!window.msal) { $("authMsg").textContent = "Aanmeldbibliotheek niet geladen."; $("auth").hidden = false; return Promise.resolve(); }
-    return msal.createStandardPublicClientApplication(msalConfig()).then(function (app) {
-      pca = app;
-      return pca.handleRedirectPromise().catch(function () { return null; });
-    }).then(function () {
-      var accs = pca.getAllAccounts();
-      if (accs.length) account = accs[0];
-    }).catch(function (e) { $("authMsg").textContent = "Aanmelden niet beschikbaar: " + (e.message || e); $("auth").hidden = false; });
+    pca = true;   // markering: aanmelding beschikbaar
+    loadTokens();
+    // Berichten van het pop-upvenster (code of fout)
+    window.addEventListener("message", function (ev) {
+      // Pop-up kan door Outlook een afgeschermde (opaque) oorsprong hebben; de state-controle beschermt.
+      if ((ev.origin !== location.origin && ev.origin !== "null") || !ev.data || ev.data.type !== "mn_auth" || !pendingAuth) return;
+      var p = pendingAuth; pendingAuth = null;
+      try { if (p.win && !p.win.closed) p.win.close(); } catch (e) {}
+      if (ev.data.error) { p.reject(new Error(ev.data.error_description || ev.data.error)); return; }
+      if (ev.data.state !== p.state) { p.reject(new Error("state klopt niet")); return; }
+      tokenRequest({ client_id: CLIENT_ID, grant_type: "authorization_code", code: ev.data.code, redirect_uri: redirectUri(), code_verifier: p.verifier, scope: SCOPE_STR })
+        .then(p.resolve, p.reject);
+    });
+    return Promise.resolve();
   }
-  // Dialoogvenster-modus: dit venster is geopend om aan te melden.
-  function isDialog() { try { return sessionStorage.getItem(DIALOG_FLAG) === "1" || /[?&]dialog=1/.test(location.search); } catch (e) { return false; } }
-  function runDialog() {
-    try { sessionStorage.setItem(DIALOG_FLAG, "1"); } catch (e) {}
-    document.body.innerHTML = '<div class="empty" id="dlg">Aanmelden bij Microsoft…</div>';
-    msal.createStandardPublicClientApplication(msalConfig()).then(function (app) {
-      return app.handleRedirectPromise().then(function (res) {
-        if (res && res.accessToken) {   // terug van Microsoft: token aan het paneel doorgeven
-          try { sessionStorage.removeItem(DIALOG_FLAG); } catch (e) {}
-          document.getElementById("dlg").textContent = "Aangemeld. Dit venster sluit vanzelf.";
-          var payload = JSON.stringify({ token: res.accessToken, exp: res.expiresOn ? new Date(res.expiresOn).getTime() : Date.now() + 50 * 60000,
-            upn: res.account ? res.account.username : "" });
-          Office.onReady(function () { Office.context.ui.messageParent(payload); });
-          return;
-        }
-        return app.acquireTokenRedirect({ scopes: SCOPES, prompt: "select_account" });
-      });
-    }).catch(function (e) { document.getElementById("dlg").textContent = "Aanmelden mislukt: " + (e.message || e); });
+  function isDialog() { return false; }
+  // Pop-upvenster: terug van Microsoft. Code (of fout) naar het paneel sturen en sluiten.
+  function runPopupReturn() {
+    var q = {}; (location.hash.replace(/^#/, "") + "&" + location.search.replace(/^\?/, "")).split("&").forEach(function (kv) {
+      var i = kv.indexOf("="); if (i > 0) q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, " "));
+    });
+    var msg = { type: "mn_auth", code: q.code || "", state: q.state || "", error: q.error || "", error_description: q.error_description || "" };
+    document.body.innerHTML = '<div class="empty" style="padding:12px">' + (msg.error ? "Aanmelden mislukt: " + msg.error_description : "Aangemeld. Dit venster sluit vanzelf.") + "</div>";
+    try { if (window.opener) window.opener.postMessage(msg, "*"); } catch (e) {}
+    setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
   }
-  var dlgToken = null;   // token uit het aanmeldvenster: { token, exp }
-  function loadDlgToken() { try { dlgToken = JSON.parse(sessionStorage.getItem("mn_token") || "null"); } catch (e) { dlgToken = null; } }
+  function userHint() { var u = Office.context.mailbox.userProfile; return (u && u.emailAddress) || ""; }
   function interactiveLogin() {
-    return new Promise(function (resolve, reject) {
-      var url = location.origin + location.pathname + "?dialog=1";
-      Office.context.ui.displayDialogAsync(url, { height: 60, width: 35, promptBeforeOpen: false }, function (r) {
-        if (r.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error(r.error.message)); return; }
-        var dlg = r.value;
-        dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (a) {
-          dlg.close();
-          try { var m = JSON.parse(a.message); if (m && m.token) { dlgToken = m; try { sessionStorage.setItem("mn_token", JSON.stringify(m)); } catch (e) {} } } catch (e) {}
-          resolve();
-        });
-        dlg.addEventHandler(Office.EventType.DialogEventReceived, function (a) { reject(new Error(a.error === 12006 ? "venster gesloten" : "dialoog " + a.error)); });
+    var verifier = randomString(48), state = randomString(16);
+    return sha256(verifier).then(function (challenge) {
+      var url = AUTH + "/authorize?client_id=" + CLIENT_ID + "&response_type=code&redirect_uri=" + encodeURIComponent(redirectUri()) +
+        "&response_mode=fragment&scope=" + encodeURIComponent(SCOPE_STR) + "&state=" + state + "&code_challenge=" + challenge + "&code_challenge_method=S256" +
+        "&login_hint=" + encodeURIComponent(userHint()) + "&prompt=select_account";
+      return new Promise(function (resolve, reject) {
+        var win = window.open(url, "mn_auth", "width=480,height=640,popup=yes");
+        if (!win) { reject(new Error("pop-up geblokkeerd door de browser")); return; }
+        pendingAuth = { verifier: verifier, state: state, resolve: resolve, reject: reject, win: win };
+        var timer = setInterval(function () {
+          if (!pendingAuth || pendingAuth.state !== state) { clearInterval(timer); return; }
+          try { if (win.closed) { clearInterval(timer); pendingAuth = null; reject(new Error("venster gesloten")); } } catch (e) {}
+        }, 500);
       });
     });
   }
-  function userHint() { var u = Office.context.mailbox.userProfile; return (u && u.emailAddress) || ""; }
   function getToken(interactive) {
     if (!pca) return Promise.reject(new Error("geen aanmelding"));
-    if (dlgToken && dlgToken.token && dlgToken.exp > Date.now() + 60000) return Promise.resolve(dlgToken.token);
-    var accs = pca.getAllAccounts(); if (!account && accs.length) account = accs[0];
-    var silent = account
-      ? pca.acquireTokenSilent({ scopes: SCOPES, account: account })
-      : pca.ssoSilent({ scopes: SCOPES, loginHint: userHint() });   // stil via de bestaande Outlook-sessie
-    return silent.then(function (r) { account = r.account; return r.accessToken; })
-      .catch(function (e) {
-        if (!interactive) throw e;
-        // Eerst een gewoon pop-upvenster (zelfde oorsprong, werkt ondanks opslagscheiding in Chrome);
-        // lukt dat niet (pop-up geblokkeerd), dan het Office-dialoogvenster.
-        return pca.acquireTokenPopup({ scopes: SCOPES, loginHint: userHint(), prompt: "select_account" })
-          .then(function (r) { account = r.account; return r.accessToken; })
-          .catch(function (e2) {
-            var code = (e2 && e2.errorCode) || "";
-            if (!/popup|user_cancelled|interaction_in_progress/i.test(code)) throw e2;
-            return interactiveLogin().then(function () {
-              if (dlgToken && dlgToken.token) return dlgToken.token;
-              return getToken(false);
-            });
-          });
-      });
+    if (tokens && tokens.access && tokens.exp > Date.now() + 60000) return Promise.resolve(tokens.access);
+    var silent = (tokens && tokens.refresh)
+      ? tokenRequest({ client_id: CLIENT_ID, grant_type: "refresh_token", refresh_token: tokens.refresh, scope: SCOPE_STR })
+      : Promise.reject(new Error("niet aangemeld"));
+    return silent.catch(function (e) {
+      if (!interactive) throw e;
+      return interactiveLogin();
+    });
   }
   function graph(method, path, body, token) {
     return fetch(GRAPH + path, { method: method, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -699,13 +697,8 @@
   }
 
   // --- Start -----------------------------------------------------------------------
-  // Pop-upvenster van MSAL: terug van Microsoft met een code in de hash. Niets doen; het paneel
-  // (de opener) leest de code uit en sluit dit venster zelf.
-  if (!isDialog() && window.opener && /(code|error)=/.test(location.hash)) {
-    document.body.innerHTML = '<div class="empty" style="padding:12px">Aanmelden afronden… Dit venster sluit vanzelf.</div>';
-    return;
-  }
-  if (isDialog()) { runDialog(); return; }
+  // Pop-upvenster: terug van Microsoft met code of fout → doorgeven aan het paneel.
+  if (/(code|error)=/.test(location.hash) || /[?&](code|error)=/.test(location.search)) { runPopupReturn(); return; }
   Office.onReady(function () {
     me = (Office.context.mailbox.userProfile && Office.context.mailbox.userProfile.displayName) || "";
     $("cats").addEventListener("click", function (e) {
@@ -730,7 +723,7 @@
       getToken(true).then(function () { $("auth").hidden = true; graphRefresh(loadSeq); runFilter(); })
         .catch(function (e) { $("authMsg").textContent = "Aanmelden mislukt: " + (e.message || e); });
     });
-    loadOwners(); loadFilterSel(); loadDlgToken();
+    loadOwners(); loadFilterSel();
     $("filterClear").addEventListener("click", function () { filterSel = []; saveFilterSel(); renderFilterCats(); runFilter(); });
     // Bij vastgezet (gepind) paneel: opnieuw laden als je een andere mail selecteert.
     if (Office.context.requirements.isSetSupported("Mailbox", "1.5")) {
