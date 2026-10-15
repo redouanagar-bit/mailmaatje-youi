@@ -162,13 +162,6 @@
       <button class="btn" id="saveDeadline">Opslaan</button>
       <button class="btn lite" id="clearDeadline">Wis deadline</button>
     </div>
-    <div class="row" id="clearAsk" hidden style="margin-top:6px;justify-content:space-between">
-      <span class="foot" style="margin:0">Deadline, herinneringen, vlag en agenda-items wissen?</span>
-      <span class="row">
-        <button class="btn" id="clearYes">Ja, wissen</button>
-        <button class="btn lite" id="clearNo">Annuleren</button>
-      </span>
-    </div>
     <div class="warn" id="overdue"></div>
     <div class="foot" id="flagState" style="margin-top:4px"></div>
     <div class="foot" id="calState" style="margin-top:2px"></div>
@@ -1138,10 +1131,8 @@
       addSys("Deadline " + fmtD(data.d) + " " + (data.t || "09:00") + (data.r.length ? ", herinnering " + data.r.map(remLabel).join(", ") + " vooraf" : ", zonder herinneringen"));
       save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen: vlag gezet" + (data.r.length ? ", agenda bijgewerkt" : "")); syncCalendar(); });
     });
-    $("clearDeadline").addEventListener("click", function () { $("clearAsk").hidden = false; });
-    $("clearNo").addEventListener("click", function () { $("clearAsk").hidden = true; });
-    $("clearYes").addEventListener("click", function () {
-      $("clearAsk").hidden = true;
+    $("clearDeadline").addEventListener("click", function () {
+      if (!data.d && !data.r.length && !$("deadline").value) { msg("Er staat geen deadline."); return; }
       var hadRem = data.r.length;
       data.d = ""; data.t = ""; data.r = [];
       addSys("Deadline gewist" + (hadRem ? " (incl. " + hadRem + " herinnering" + (hadRem > 1 ? "en" : "") + ")" : ""));
