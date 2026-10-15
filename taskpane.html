@@ -413,35 +413,50 @@
     document.body.innerHTML = '<div class="empty" id="dlg">Aanmelden bij Microsoft…</div>';
     msal.createStandardPublicClientApplication(msalConfig()).then(function (app) {
       return app.handleRedirectPromise().then(function (res) {
-        if (res && res.accessToken) {   // terug van Microsoft: klaar, ouder informeren
+        if (res && res.accessToken) {   // terug van Microsoft: token aan het paneel doorgeven
           try { sessionStorage.removeItem(DIALOG_FLAG); } catch (e) {}
           document.getElementById("dlg").textContent = "Aangemeld. Dit venster sluit vanzelf.";
-          Office.onReady(function () { Office.context.ui.messageParent("ok"); });
+          var payload = JSON.stringify({ token: res.accessToken, exp: res.expiresOn ? new Date(res.expiresOn).getTime() : Date.now() + 50 * 60000,
+            upn: res.account ? res.account.username : "" });
+          Office.onReady(function () { Office.context.ui.messageParent(payload); });
           return;
         }
         return app.acquireTokenRedirect({ scopes: SCOPES, prompt: "select_account" });
       });
     }).catch(function (e) { document.getElementById("dlg").textContent = "Aanmelden mislukt: " + (e.message || e); });
   }
+  var dlgToken = null;   // token uit het aanmeldvenster: { token, exp }
+  function loadDlgToken() { try { dlgToken = JSON.parse(sessionStorage.getItem("mn_token") || "null"); } catch (e) { dlgToken = null; } }
   function interactiveLogin() {
     return new Promise(function (resolve, reject) {
       var url = location.origin + location.pathname + "?dialog=1";
       Office.context.ui.displayDialogAsync(url, { height: 60, width: 35, promptBeforeOpen: false }, function (r) {
         if (r.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error(r.error.message)); return; }
         var dlg = r.value;
-        dlg.addEventHandler(Office.EventType.DialogMessageReceived, function () { dlg.close(); resolve(); });
+        dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (a) {
+          dlg.close();
+          try { var m = JSON.parse(a.message); if (m && m.token) { dlgToken = m; try { sessionStorage.setItem("mn_token", JSON.stringify(m)); } catch (e) {} } } catch (e) {}
+          resolve();
+        });
         dlg.addEventHandler(Office.EventType.DialogEventReceived, function (a) { reject(new Error(a.error === 12006 ? "venster gesloten" : "dialoog " + a.error)); });
       });
     });
   }
+  function userHint() { var u = Office.context.mailbox.userProfile; return (u && u.emailAddress) || ""; }
   function getToken(interactive) {
     if (!pca) return Promise.reject(new Error("geen aanmelding"));
+    if (dlgToken && dlgToken.token && dlgToken.exp > Date.now() + 60000) return Promise.resolve(dlgToken.token);
     var accs = pca.getAllAccounts(); if (!account && accs.length) account = accs[0];
-    if (!account) return interactive ? interactiveLogin().then(function () { return getToken(false); }) : Promise.reject(new Error("niet aangemeld"));
-    return pca.acquireTokenSilent({ scopes: SCOPES, account: account }).then(function (r) { account = r.account; return r.accessToken; })
+    var silent = account
+      ? pca.acquireTokenSilent({ scopes: SCOPES, account: account })
+      : pca.ssoSilent({ scopes: SCOPES, loginHint: userHint() });   // stil via de bestaande Outlook-sessie
+    return silent.then(function (r) { account = r.account; return r.accessToken; })
       .catch(function (e) {
         if (!interactive) throw e;
-        return interactiveLogin().then(function () { return getToken(false); });
+        return interactiveLogin().then(function () {
+          if (dlgToken && dlgToken.token) return dlgToken.token;
+          return getToken(false);
+        });
       });
   }
   function graph(method, path, body, token) {
@@ -701,7 +716,7 @@
       getToken(true).then(function () { $("auth").hidden = true; graphRefresh(loadSeq); runFilter(); })
         .catch(function (e) { $("authMsg").textContent = "Aanmelden mislukt: " + (e.message || e); });
     });
-    loadOwners(); loadFilterSel();
+    loadOwners(); loadFilterSel(); loadDlgToken();
     $("filterClear").addEventListener("click", function () { filterSel = []; saveFilterSel(); renderFilterCats(); runFilter(); });
     // Bij vastgezet (gepind) paneel: opnieuw laden als je een andere mail selecteert.
     if (Office.context.requirements.isSetSupported("Mailbox", "1.5")) {
