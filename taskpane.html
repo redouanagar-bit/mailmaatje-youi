@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailmaatje</title>
+<script>
+// Cache omzeilen: GitHub Pages cachet 10 min. Herlaad zichzelf met uniek nummer, behalve in de
+// aanmelddialoog en bij terugkeer van Microsoft (hash met code).
+(function () {
+  try {
+    if (/[?&](v|dialog)=/.test(location.search) || /(code|error|state)=/.test(location.hash) || sessionStorage.getItem("mn_dialog") === "1") return;
+    location.replace(location.pathname + "?v=" + Date.now());
+  } catch (e) {}
+})();
+</script>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@5.25.1/lib/msal-browser.min.js"></script>
+<style>
+  :root { --fg:#242424; --muted:#616161; --line:#e0e0e0; --bg:#ffffff; --soft:#f5f5f5; --hover:#ebebeb;
+          --accent:#0f6cbd; --accent-hover:#115ea3; --danger:#c50f1f; --r:6px; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { margin:0; padding:14px 14px 20px; font:13px/1.45 "Segoe UI", "Segoe UI Web", system-ui, sans-serif; color:var(--fg); background:var(--bg); }
+  h1 { font-size:15px; font-weight:600; margin:0 0 2px; letter-spacing:-.01em; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:18px 0 6px; }
+  label:first-of-type { margin-top:12px; }
+
+  /* Categorieën: 3 x 3, pil-vormige knoppen met kleurstip */
+  .cats { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
+  .cats button { font:inherit; font-size:12px; padding:7px 6px 7px 18px; border:1px solid var(--line); border-radius:var(--r);
+    background:var(--bg); color:var(--fg); cursor:pointer; position:relative; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    min-height:32px; transition:background .12s, border-color .12s, box-shadow .12s; }
+  .cats button:hover { background:var(--soft); border-color:#c7c7c7; }
+  .cats button::before { content:""; position:absolute; left:7px; top:50%; width:7px; height:7px; margin-top:-4px; border-radius:50%; background:var(--c, #999); }
+  .cats button.on { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  .cats button.on::before { box-shadow:0 0 0 2px rgba(255,255,255,.35); }
+  .cats button:disabled { opacity:.6; cursor:default; }
+  .cats .slot { border:1px dashed var(--line); border-radius:var(--r); background:var(--soft); min-height:32px; }
+
+  input, textarea, select { width:100%; font:inherit; padding:7px 9px; border:1px solid var(--line); border-radius:var(--r); background:var(--bg); color:var(--fg);
+    transition:border-color .12s, box-shadow .12s; }
+  input:hover, textarea:hover { border-color:#c7c7c7; }
+  input:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(15,108,189,.18); }
+  textarea { min-height:72px; resize:vertical; }
+  ::placeholder { color:#8a8a8a; }
+  .row { display:flex; gap:6px; align-items:center; }
+  .row input { flex:1; }
+  .row input[type=time] { flex:0 0 96px; }
+
+  .btn { font:inherit; font-weight:600; padding:7px 12px; border:1px solid var(--accent); border-radius:var(--r); background:var(--accent); color:#fff; cursor:pointer; white-space:nowrap;
+    transition:background .12s, border-color .12s; }
+  .btn:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+  .btn.lite { background:var(--bg); color:var(--fg); border-color:var(--line); font-weight:500; }
+  .btn.lite:hover { background:var(--soft); border-color:#c7c7c7; }
+  .btn[disabled] { opacity:.5; cursor:default; }
+
+  .warn { font-size:12px; margin-top:6px; font-weight:600; color:var(--danger); }
+  .warn:empty { display:none; }
+
+  details { border:1px solid var(--line); border-radius:var(--r); padding:6px 10px; margin-top:8px; background:var(--soft); }
+  details[open] { background:var(--bg); }
+  summary { cursor:pointer; font-size:12px; font-weight:500; color:var(--fg); list-style:none; display:flex; align-items:center; gap:6px; }
+  summary::-webkit-details-marker { display:none; }
+  summary::before { content:""; width:6px; height:6px; border-right:1.5px solid var(--muted); border-bottom:1.5px solid var(--muted); transform:rotate(-45deg); transition:transform .12s; }
+  details[open] summary::before { transform:rotate(45deg); }
+  .rem { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; margin:8px 0 4px; }
+  .rem label { display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:12px; font-weight:400; color:var(--fg); margin:0; }
+  .rem input { width:auto; accent-color:var(--accent); }
+
+  .note { border-top:1px solid var(--line); padding:9px 0; }
+  .note:first-child { border-top:0; padding-top:4px; }
+  .note .meta { font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:8px; }
+  .note .meta a { color:var(--muted); cursor:pointer; text-decoration:none; }
+  .note .meta a:hover { color:var(--danger); text-decoration:underline; }
+  .note .txt { white-space:pre-wrap; margin-top:3px; }
+  .hist { display:flex; gap:8px; font-size:12px; padding:5px 0; border-top:1px solid var(--line); }
+  .hist:first-child { border-top:0; }
+  .hist .d { color:var(--muted); white-space:nowrap; flex:0 0 auto; }
+  .hist .x { flex:1; }
+
+
+  .rel { border-top:1px solid var(--line); padding:7px 8px; margin:0 -8px; border-radius:var(--r); cursor:pointer; }
+  .rel:hover { background:var(--soft); }
+  .rel .m { font-size:11px; color:var(--muted); }
+  .rel .s { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .grp { font-size:11px; font-weight:600; color:var(--muted); margin:8px 0 2px; }
+  .top { padding-bottom:10px; border-bottom:1px solid var(--line); }
+  .top details { margin-top:6px; }
+  #filterList { margin-top:4px; max-height:260px; overflow:auto; }
+  #filterList .rel .c { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .foot { margin-top:14px; font-size:11px; color:var(--muted); }
+  #msg { font-size:12px; color:var(--muted); min-height:16px; margin-top:8px; }
+  .empty { color:var(--muted); font-size:12px; }
+  #auth { margin-top:10px; padding:10px; border:1px solid var(--line); border-radius:var(--r); background:var(--soft); }
+  #auth .btn { width:100%; }
+  #auth .foot { margin-top:6px; }
+</style>
+</head>
+<body>
+  <div id="app" hidden>
+    <div class="top">
+      <h1>Mailmaatje</h1>
+      <details id="filterBox">
+        <summary>Filter mailbox (<span id="filterCount">0</span> gekozen)</summary>
+        <div class="rem" id="filterCats"></div>
+        <div class="row" style="margin-top:6px;justify-content:space-between">
+          <span class="foot" id="filterState" style="margin:0"></span>
+          <button class="btn lite" id="filterClear">Wis filter</button>
+        </div>
+      </details>
+      <div id="filterList"></div>
+    </div>
+
+    <label>Deze mail</label>
+    <div class="sub" id="subject"></div>
+
+    <label>Categorieën</label>
+    <div class="cats" id="cats"></div>
+    <div class="empty" id="catsMsg" hidden></div>
+
+    <label for="deadline">Deadline</label>
+    <div class="row">
+      <input type="date" id="deadline">
+      <input type="time" id="dtime" value="09:00">
+      <button class="btn lite" id="clearDeadline" title="Deadline wissen">Wis</button>
+    </div>
+    <div class="warn" id="overdue"></div>
+    <details id="remBox">
+      <summary>Herinneringen (<span id="remCount">0</span> gekozen)</summary>
+      <div class="rem" id="rem"></div>
+    </details>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="toCal">In agenda zetten</button>
+      <button class="btn lite" id="fromCal" hidden>Uit agenda halen</button>
+    </div>
+    <div class="foot" id="calState" style="margin-top:5px"></div>
+
+    <label for="owner">Verantwoordelijke</label>
+    <input id="owner" list="ownerList" placeholder="Naam">
+    <datalist id="ownerList"></datalist>
+
+    <label for="newNote">Notitie toevoegen</label>
+    <textarea id="newNote" placeholder="Typ een notitie…"></textarea>
+    <div class="row" style="justify-content:space-between;margin-top:6px">
+      <span class="foot" id="space" style="margin:0"></span>
+      <button class="btn" id="addNote">Toevoegen</button>
+    </div>
+
+    <label>Notities</label>
+    <div id="notes"></div>
+
+    <details id="histBox" style="margin-top:12px">
+      <summary>Statushistorie (<span id="histCount">0</span>)</summary>
+      <div id="hist"></div>
+    </details>
+
+    <label>Gerelateerde mails</label>
+    <div id="related" class="empty">—</div>
+
+    <div id="msg"></div>
+    <div id="auth" hidden>
+      <button class="btn lite" id="signIn">Aanmelden voor agenda en gerelateerde mails</button>
+      <div class="foot" id="authMsg"></div>
+    </div>
+    <div class="foot">Alleen zichtbaar in deze mailbox. Wordt niet meegestuurd bij beantwoorden of doorsturen.</div>
+  </div>
+  <div id="none" class="empty" hidden>Selecteer een e-mail.</div>
+
+<script>
+(function () {
+  "use strict";
+  // --- Instellingen -------------------------------------------------------
+  var KEY = "mn";            // naam van de custom property op de mail
+  var CATEGORY = "Mailnotitie";
+  var LIMIT = 2400;          // Outlook staat ca. 2500 tekens aan custom properties per mail toe
+  var MAXCATS = 9;           // 3 x 3
+  var CLIENT_ID = "";   // app-registratie Mailmaatje (YOUI Advies) — nog in te vullen
+  var TENANT_ID = "";
+  var SCOPES = ["User.Read", "Calendars.ReadWrite", "Mail.ReadWrite"];
+  var GRAPH = "https://graph.microsoft.com/v1.0";
+  var EXTPROP = "String {66f5a359-4659-4830-9070-00050ec6ac6e} Name MailnotitieRef";  // koppelt agenda-items aan de mail
+  var REMINDERS = [
+    [10, "10 minuten"], [30, "30 minuten"], [60, "1 uur"], [180, "3 uur"], [360, "6 uur"], [720, "12 uur"],
+    [1440, "1 dag"], [2880, "2 dagen"], [4320, "3 dagen"], [5760, "4 dagen"],
+    [10080, "1 week"], [20160, "2 weken"], [43200, "1 maand"]
+  ];
+  // Outlook-presetkleuren (Preset0..Preset24) naar hex, alleen voor het bolletje voor de naam.
+  var COLORS = ["#e74856","#ff8c00","#a0522d","#ffd700","#107c10","#008272","#808000","#0078d4","#8764b8","#c239b3","#4f6bed","#3a3f5c","#808080","#505050","#000000","#a4262c","#ca5010","#5c2e0e","#986f0b","#0b6a0b","#005b5b","#498205","#004e8c","#5c2d91","#881798"];
+
+  var props = null, data = null, me = "", master = [], current = [];
+  var pca = null, account = null, graphMsg = null, loadSeq = 0;
+
+  function $(id) { return document.getElementById(id); }
+  function empty() { return { d: "", t: "", r: [], v: "", n: [] }; }
+  function msg(t) { $("msg").textContent = t || ""; }
+  function hasContent(d) { return !!(d.d || d.v || d.n.length); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function fmtDate(iso) {
+    var x = new Date(iso);
+    return pad(x.getDate()) + "-" + pad(x.getMonth() + 1) + "-" + x.getFullYear() + " " + pad(x.getHours()) + ":" + pad(x.getMinutes());
+  }
+  function fmtD(ymd) { var p = ymd.split("-"); return p[2] + "-" + p[1] + "-" + p[0]; }
+  function remLabel(m) { for (var i = 0; i < REMINDERS.length; i++) if (REMINDERS[i][0] === m) return REMINDERS[i][1]; return m + " min"; }
+  function addSys(text) { data.n.push({ t: new Date().toISOString(), a: me, x: text, k: "s" }); }
+
+  // --- Laden van de mail --------------------------------------------------
+  function load() {
+    var item = Office.context.mailbox.item, seq = ++loadSeq;
+    if (!item) { $("app").hidden = true; $("none").hidden = false; return; }
+    $("none").hidden = true; $("app").hidden = false;
+    $("subject").textContent = item.subject || "(geen onderwerp)";
+    $("newNote").value = "";
+    $("related").textContent = "—"; $("calState").textContent = ""; $("fromCal").hidden = true; graphMsg = null;
+    msg("Laden…");
+    item.loadCustomPropertiesAsync(function (r) {
+      if (seq !== loadSeq) return;
+      if (r.status !== Office.AsyncResultStatus.Succeeded) { msg("Kon notities niet laden: " + r.error.message); return; }
+      props = r.value;
+      try { data = JSON.parse(props.get(KEY) || "null") || empty(); } catch (e) { data = empty(); }
+      if (!Array.isArray(data.n)) data.n = [];
+      if (!Array.isArray(data.r)) data.r = [];
+      render(); msg("");
+      graphRefresh(seq);
+    });
+    loadCats();
+  }
+
+  function render() {
+    $("deadline").value = data.d || "";
+    $("dtime").value = data.t || "09:00";
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var late = data.d && new Date(data.d + "T00:00:00") < today;
+    $("overdue").textContent = late ? "Deadline verstreken" : "";
+    $("owner").value = data.v || "";
+    renderReminders();
+    var box = $("notes"); box.innerHTML = "";
+    var notes = data.n.filter(function (n) { return n.k !== "s"; }), sys = data.n.filter(function (n) { return n.k === "s"; });
+    // Statushistorie (categorie, vlag, agenda) in eigen blok
+    var hb = $("hist"); hb.innerHTML = ""; $("histCount").textContent = sys.length;
+    if (!sys.length) hb.innerHTML = '<div class="empty">Nog geen wijzigingen.</div>';
+    sys.slice().reverse().forEach(function (n) {
+      var el = document.createElement("div"); el.className = "hist";
+      var d = document.createElement("span"); d.className = "d"; d.textContent = fmtDate(n.t);
+      // Naam erbij; regels zijn niet te verwijderen (verantwoording wie wat heeft gewijzigd).
+      var x = document.createElement("span"); x.className = "x"; x.textContent = n.x + " — " + (n.a || "onbekend");
+      el.appendChild(d); el.appendChild(x); hb.appendChild(el);
+    });
+    if (!notes.length) { box.innerHTML = '<div class="empty">Nog geen notities.</div>'; }
+    notes.slice().reverse().forEach(function (n) {
+      var real = data.n.indexOf(n);
+      var el = document.createElement("div"); el.className = "note";
+      var meta = document.createElement("div"); meta.className = "meta";
+      var who = document.createElement("span"); who.textContent = fmtDate(n.t) + " · " + n.a;
+      // Geen confirm(): Outlook blokkeert browserpop-ups in add-ins. Bevestiging in het paneel zelf.
+      var del = document.createElement("a"); del.textContent = "verwijder";
+      var ask = document.createElement("span"); ask.hidden = true;
+      var yes = document.createElement("a"); yes.textContent = "verwijderen";
+      var no = document.createElement("a"); no.textContent = "annuleren"; no.style.marginLeft = "8px";
+      ask.appendChild(document.createTextNode("Zeker? ")); ask.appendChild(yes); ask.appendChild(no);
+      del.onclick = function () { del.hidden = true; ask.hidden = false; };
+      no.onclick = function () { ask.hidden = true; del.hidden = false; };
+      yes.onclick = function () { data.n.splice(real, 1); save("Notitie verwijderd"); };
+      meta.appendChild(who); meta.appendChild(del); meta.appendChild(ask);
+      var txt = document.createElement("div"); txt.className = "txt"; txt.textContent = n.x;
+      el.appendChild(meta); el.appendChild(txt); box.appendChild(el);
+    });
+    $("space").textContent = "Ruimte: " + Math.max(0, LIMIT - JSON.stringify(data).length) + " tekens";
+  }
+
+  function renderReminders() {
+    var box = $("rem"); box.innerHTML = "";
+    REMINDERS.forEach(function (r) {
+      var l = document.createElement("label");
+      var c = document.createElement("input"); c.type = "checkbox"; c.value = r[0]; c.checked = data.r.indexOf(r[0]) !== -1;
+      c.onchange = function () {
+        data.r = data.r.filter(function (x) { return x !== r[0]; });
+        if (c.checked) data.r.push(r[0]);
+        data.r.sort(function (a, b) { return a - b; });
+        $("remCount").textContent = data.r.length;
+        save("Herinneringen opgeslagen");
+      };
+      l.appendChild(c); l.appendChild(document.createTextNode(r[1])); box.appendChild(l);
+    });
+    $("remCount").textContent = data.r.length;
+  }
+
+  function save(okText, cb) {
+    var json = JSON.stringify(data);
+    if (json.length > LIMIT) {
+      msg("Te veel tekst voor deze mail (max. ca. " + LIMIT + " tekens). Verwijder een oude notitie of kort in.");
+      load(); return;
+    }
+    if (hasContent(data)) props.set(KEY, json); else props.remove(KEY);
+    msg("Opslaan…");
+    props.saveAsync(function (r) {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) { msg("Opslaan mislukt: " + r.error.message); return; }
+      render(); msg(okText || "Opgeslagen");
+      setCategory(hasContent(data));
+      if (cb) cb();
+    });
+  }
+
+  // --- Categorie "Mailnotitie" (markering: deze mail heeft een notitie) -------
+  function setCategory(on) {
+    var item = Office.context.mailbox.item;
+    if (!item || !item.categories || !Office.context.requirements.isSetSupported("Mailbox", "1.8")) return;
+    if (!on) { item.categories.removeAsync([CATEGORY], function () {}); return; }
+    item.categories.addAsync([CATEGORY], function (r) {
+      if (r.status === Office.AsyncResultStatus.Succeeded) return;
+      Office.context.mailbox.masterCategories.addAsync(
+        [{ displayName: CATEGORY, color: Office.MailboxEnums.CategoryColor.Preset14 }],
+        function () { item.categories.addAsync([CATEGORY], function () {}); });
+    });
+  }
+
+  // --- Categorieën: lijst uit de mailbox (max. 9), knoppen 3 x 3 ---------------
+  function catsSupported() {
+    var item = Office.context.mailbox.item;
+    return !!(item && item.categories && Office.context.mailbox.masterCategories &&
+      Office.context.requirements.isSetSupported("Mailbox", "1.8"));
+  }
+  function loadCats() {
+    var box = $("cats"), note = $("catsMsg");
+    if (!catsSupported()) { box.innerHTML = ""; note.hidden = false; note.textContent = "Categorieën niet beschikbaar in deze Outlook-versie."; return; }
+    Office.context.mailbox.masterCategories.getAsync(function (r) {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) { note.hidden = false; note.textContent = "Categorielijst niet te lezen: " + r.error.message; return; }
+      master = (r.value || []).filter(function (c) { return c.displayName !== CATEGORY; }).slice(0, MAXCATS);
+      Office.context.mailbox.item.categories.getAsync(function (r2) {
+        current = (r2.status === Office.AsyncResultStatus.Succeeded && r2.value) ? r2.value.map(function (c) { return c.displayName; }) : [];
+        renderCats();
+      });
+    });
+  }
+  function colorOf(c) {
+    var m = /Preset(\d+)/.exec(c.color || "");
+    return m ? (COLORS[+m[1]] || "#999") : "#999";
+  }
+  function renderCats() {
+    var box = $("cats"), note = $("catsMsg"); box.innerHTML = "";
+    if (!master.length) { note.hidden = false; note.textContent = "Geen categorieën in deze mailbox."; }
+    else note.hidden = true;
+    master.forEach(function (c) {
+      var b = document.createElement("button");
+      b.textContent = c.displayName; b.title = c.displayName;
+      b.setAttribute("data-c", c.displayName);
+      b.style.setProperty("--c", colorOf(c));
+      b.classList.toggle("on", current.indexOf(c.displayName) !== -1);
+      box.appendChild(b);
+    });
+    for (var i = master.length; i < MAXCATS; i++) {   // altijd 9 vakjes: lege plekken opvullen
+      var e = document.createElement("div"); e.className = "slot"; box.appendChild(e);
+    }
+    renderFilterCats();
+  }
+  function toggleCat(name) {
+    var item = Office.context.mailbox.item, on = current.indexOf(name) !== -1;
+    var btns = $("cats").querySelectorAll("button");
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+    msg(on ? "Categorie verwijderen…" : "Categorie toevoegen…");
+    var done = function (r) {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) { msg("Categorie wijzigen mislukt: " + r.error.message); loadCats(); return; }
+      if (on) current = current.filter(function (x) { return x !== name; }); else current.push(name);
+      renderCats();
+      // Categoriewijziging in de historie (data is al geladen; anders alleen melden).
+      var txt = on ? "Categorie verwijderd: " + name : "Categorie gezet: " + name;
+      if (data) { addSys(txt); save(txt, function () { if (name === DONE_CATEGORY) syncFlag(txt + (on ? ", vlag weer open" : ", vlag voltooid")); }); }
+      else msg(txt);
+    };
+    if (on) item.categories.removeAsync([name], done); else item.categories.addAsync([name], done);
+  }
+
+  // --- Verantwoordelijke: eerder gebruikte namen -------------------------------
+  function loadOwners() {
+    var list = Office.context.roamingSettings.get("owners") || [];
+    var dl = $("ownerList"); dl.innerHTML = "";
+    list.forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
+  }
+  function rememberOwner(name) {
+    if (!name) return;
+    var rs = Office.context.roamingSettings, list = rs.get("owners") || [];
+    if (list.indexOf(name) !== -1) return;
+    list.push(name); list.sort(); rs.set("owners", list.slice(0, 50));
+    rs.saveAsync(function () { loadOwners(); });
+  }
+
+  // --- Microsoft Graph: aanmelden -----------------------------------------------
+  // Stil (refresh token in localStorage) waar mogelijk; anders een Office-dialoogvenster dat de
+  // Microsoft-aanmelding doet en daarna de tokens in dezelfde localStorage zet.
+  var DIALOG_FLAG = "mn_dialog";
+  function msalConfig() {
+    return { auth: { clientId: CLIENT_ID, authority: "https://login.microsoftonline.com/" + TENANT_ID,
+      redirectUri: location.origin + location.pathname, navigateToLoginRequestUrl: false },
+      cache: { cacheLocation: "localStorage" } };
+  }
+  function initAuth() {
+    if (!CLIENT_ID) { $("authMsg").textContent = "Agenda, vlag en filter zijn voor deze mailbox nog niet ingericht (geen app-registratie)."; $("auth").hidden = false; $("signIn").hidden = true; return Promise.resolve(); }
+    if (!window.msal) { $("authMsg").textContent = "Aanmeldbibliotheek niet geladen."; $("auth").hidden = false; return Promise.resolve(); }
+    return msal.createStandardPublicClientApplication(msalConfig()).then(function (app) {
+      pca = app;
+      return pca.handleRedirectPromise().catch(function () { return null; });
+    }).then(function () {
+      var accs = pca.getAllAccounts();
+      if (accs.length) account = accs[0];
+    }).catch(function (e) { $("authMsg").textContent = "Aanmelden niet beschikbaar: " + (e.message || e); $("auth").hidden = false; });
+  }
+  // Dialoogvenster-modus: dit venster is geopend om aan te melden.
+  function isDialog() { try { return sessionStorage.getItem(DIALOG_FLAG) === "1" || /[?&]dialog=1/.test(location.search); } catch (e) { return false; } }
+  function runDialog() {
+    try { sessionStorage.setItem(DIALOG_FLAG, "1"); } catch (e) {}
+    document.body.innerHTML = '<div class="empty" id="dlg">Aanmelden bij Microsoft…</div>';
+    msal.createStandardPublicClientApplication(msalConfig()).then(function (app) {
+      return app.handleRedirectPromise().then(function (res) {
+        if (res && res.accessToken) {   // terug van Microsoft: klaar, ouder informeren
+          try { sessionStorage.removeItem(DIALOG_FLAG); } catch (e) {}
+          document.getElementById("dlg").textContent = "Aangemeld. Dit venster sluit vanzelf.";
+          Office.onReady(function () { Office.context.ui.messageParent("ok"); });
+          return;
+        }
+        return app.acquireTokenRedirect({ scopes: SCOPES, prompt: "select_account" });
+      });
+    }).catch(function (e) { document.getElementById("dlg").textContent = "Aanmelden mislukt: " + (e.message || e); });
+  }
+  function interactiveLogin() {
+    return new Promise(function (resolve, reject) {
+      var url = location.origin + location.pathname + "?dialog=1";
+      Office.context.ui.displayDialogAsync(url, { height: 60, width: 35, promptBeforeOpen: false }, function (r) {
+        if (r.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error(r.error.message)); return; }
+        var dlg = r.value;
+        dlg.addEventHandler(Office.EventType.DialogMessageReceived, function () { dlg.close(); resolve(); });
+        dlg.addEventHandler(Office.EventType.DialogEventReceived, function (a) { reject(new Error(a.error === 12006 ? "venster gesloten" : "dialoog " + a.error)); });
+      });
+    });
+  }
+  function getToken(interactive) {
+    if (!pca) return Promise.reject(new Error("geen aanmelding"));
+    var accs = pca.getAllAccounts(); if (!account && accs.length) account = accs[0];
+    if (!account) return interactive ? interactiveLogin().then(function () { return getToken(false); }) : Promise.reject(new Error("niet aangemeld"));
+    return pca.acquireTokenSilent({ scopes: SCOPES, account: account }).then(function (r) { account = r.account; return r.accessToken; })
+      .catch(function (e) {
+        if (!interactive) throw e;
+        return interactiveLogin().then(function () { return getToken(false); });
+      });
+  }
+  function graph(method, path, body, token) {
+    return fetch(GRAPH + path, { method: method, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined })
+      .then(function (res) {
+        if (res.status === 204) return null;
+        return res.json().then(function (j) { if (!res.ok) throw new Error((j.error && j.error.message) || res.status); return j; });
+      });
+  }
+  function restId() {
+    var item = Office.context.mailbox.item;
+    return Office.context.mailbox.convertToRestId(item.itemId, Office.MailboxEnums.RestVersion.v2_0);
+  }
+  // Gegevens van de huidige mail via Graph (één keer per mail).
+  function currentMessage(token) {
+    if (graphMsg) return Promise.resolve(graphMsg);
+    return graph("GET", "/me/messages/" + restId() + "?$select=id,subject,conversationId,internetMessageId,webLink,from,receivedDateTime", null, token)
+      .then(function (m) { graphMsg = m; return m; });
+  }
+
+  // Bij laden: aangemeld? Dan agenda-status en gerelateerde mails ophalen.
+  function graphRefresh(seq) {
+    if (!pca) return;
+    getToken(false).then(function (token) {
+      if (seq !== loadSeq) return;
+      $("auth").hidden = true;
+      if (filterSel.length && !$("filterList").children.length) runFilter();
+      return currentMessage(token).then(function (m) {
+        if (seq !== loadSeq) return;
+        return Promise.all([calendarState(token, m), relatedMails(token, m)]);
+      });
+    }).catch(function () {
+      if (seq !== loadSeq) return;
+      $("auth").hidden = false; $("authMsg").textContent = "Eenmalig aanmelden voor agenda en gerelateerde mails.";
+    });
+  }
+
+  // --- Agenda -------------------------------------------------------------------
+  function refValue(m) { return encodeURIComponent(m.internetMessageId); }
+  function evFilter(m) {
+    return "/me/events?$filter=singleValueExtendedProperties/any(ep:ep/id eq '" + EXTPROP + "' and ep/value eq '" + refValue(m).replace(/'/g, "''") + "')&$select=id,subject,start&$top=50";
+  }
+  function calendarState(token, m) {
+    return graph("GET", evFilter(m), null, token).then(function (r) {
+      var n = (r.value || []).length;
+      $("calState").textContent = n ? "In agenda: " + n + " item" + (n > 1 ? "s" : "") : "Niet in agenda";
+      $("fromCal").hidden = !n;
+    }).catch(function (e) { $("calState").textContent = "Agenda: " + e.message; });
+  }
+  function localDate(ymd, hm, minusMin) {
+    var p = ymd.split("-"), q = (hm || "09:00").split(":");
+    var d = new Date(+p[0], +p[1] - 1, +p[2], +q[0], +q[1], 0);
+    if (minusMin) d = new Date(d.getTime() - minusMin * 60000);
+    return d;
+  }
+  function isoLocal(d) {
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":00";
+  }
+  function esc(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function eventBody(m) {
+    var from = (m.from && m.from.emailAddress) ? (m.from.emailAddress.name || "") + " <" + m.from.emailAddress.address + ">" : "";
+    var h = "<p>Deadline uit Mailnotities.</p><p>Mail: <a href=\"" + esc(m.webLink) + "\">" + esc(m.subject || "(geen onderwerp)") + "</a><br>Van: " + esc(from) +
+      "</p>" + (data.v ? "<p>Verantwoordelijke: " + esc(data.v) + "</p>" : "");
+    return { contentType: "html", content: h };
+  }
+  function mkEvent(subject, start, minutesLong, reminderMin, m) {
+    var tz = Office.context.mailbox.userProfile.timeZone || "W. Europe Standard Time";
+    var end = new Date(start.getTime() + minutesLong * 60000);
+    return { subject: subject, body: eventBody(m), start: { dateTime: isoLocal(start), timeZone: tz }, end: { dateTime: isoLocal(end), timeZone: tz },
+      isReminderOn: true, reminderMinutesBeforeStart: reminderMin, showAs: "free",
+      singleValueExtendedProperties: [{ id: EXTPROP, value: refValue(m) }] };
+  }
+  function removeEvents(token, m) {
+    return graph("GET", evFilter(m), null, token).then(function (r) {
+      var list = r.value || [], chain = Promise.resolve();
+      list.forEach(function (ev) { chain = chain.then(function () { return graph("DELETE", "/me/events/" + ev.id, null, token); }); });
+      return chain.then(function () { return list.length; });
+    });
+  }
+  function toCalendar() {
+    if (!data.d) { msg("Vul eerst een deadline in."); return; }
+    $("toCal").disabled = true; msg("Agenda bijwerken…");
+    var subj = Office.context.mailbox.item.subject || "(geen onderwerp)";
+    getToken(true).then(function (token) {
+      return currentMessage(token).then(function (m) {
+        return removeEvents(token, m).then(function () {   // eerst oude items van deze mail weg, dan opnieuw aanmaken
+          var rem = data.r.slice().sort(function (a, b) { return a - b; });
+          var main = mkEvent("Deadline: " + subj, localDate(data.d, data.t), 30, rem.length ? rem[0] : 15, m);
+          var chain = graph("POST", "/me/events", main, token), count = 1;
+          rem.slice(1).forEach(function (mins) {
+            chain = chain.then(function () {
+              count++;
+              return graph("POST", "/me/events", mkEvent("Herinnering (" + remLabel(mins) + " vooraf): " + subj, localDate(data.d, data.t, mins), 15, 0, m), token);
+            });
+          });
+          return chain.then(function () { return count; });
+        }).then(function (count) {
+          addSys("In agenda gezet: deadline " + fmtD(data.d) + " " + (data.t || "09:00") + (data.r.length ? ", herinnering " + data.r.map(remLabel).join(", ") + " vooraf" : ""));
+          save("In agenda gezet (" + count + " item" + (count > 1 ? "s" : "") + ")");
+          return calendarState(token, m);
+        });
+      });
+    }).catch(function (e) { msg("Agenda mislukt: " + (e.message || e)); })
+      .then(function () { $("toCal").disabled = false; });
+  }
+  function fromCalendar() {
+    $("fromCal").disabled = true; msg("Uit agenda halen…");
+    getToken(true).then(function (token) {
+      return currentMessage(token).then(function (m) {
+        return removeEvents(token, m).then(function (n) {
+          addSys("Uit agenda gehaald (" + n + " item" + (n !== 1 ? "s" : "") + ")");
+          save("Uit agenda gehaald"); return calendarState(token, m);
+        });
+      });
+    }).catch(function (e) { msg("Agenda mislukt: " + (e.message || e)); })
+      .then(function () { $("fromCal").disabled = false; });
+  }
+
+  // --- Outlook-vlag (Opvolgen): deadline = vervaldatum van de vlag, Afgerond = voltooid ----------
+  var DONE_CATEGORY = "Afgerond";
+  function flagBody() {
+    var tz = Office.context.mailbox.userProfile.timeZone || "W. Europe Standard Time";
+    if (current.indexOf(DONE_CATEGORY) !== -1) {
+      return { flagStatus: "complete", completedDateTime: { dateTime: isoLocal(new Date()), timeZone: tz } };
+    }
+    if (!data.d) return { flagStatus: "notFlagged" };
+    var due = localDate(data.d, data.t), start = new Date();
+    if (start > due) start = due;
+    return { flagStatus: "flagged", startDateTime: { dateTime: isoLocal(start), timeZone: tz }, dueDateTime: { dateTime: isoLocal(due), timeZone: tz } };
+  }
+  function syncFlag(okText) {
+    if (!pca || !data) return;
+    getToken(false).then(function (token) {
+      return graph("PATCH", "/me/messages/" + restId(), { flag: flagBody() }, token).then(function () {
+        if (okText) msg(okText);
+      });
+    }).catch(function (e) {
+      var t = (e && e.message) || "";
+      msg(/aangemeld|aanmelding|interaction|login/i.test(t) ? "Opgeslagen. Vlag niet bijgewerkt: eerst aanmelden." : "Vlag bijwerken mislukt: " + t);
+    });
+  }
+
+  // --- Filter mailbox: mails met gekozen categorieën (via Graph) -----------------------
+  var filterSel = [];
+  function loadFilterSel() { filterSel = Office.context.roamingSettings.get("filter") || []; }
+  function saveFilterSel() { var rs = Office.context.roamingSettings; rs.set("filter", filterSel); rs.saveAsync(function () {}); }
+  function renderFilterCats() {
+    var box = $("filterCats"); box.innerHTML = "";
+    var names = master.map(function (c) { return c.displayName; }); names.push(CATEGORY);
+    names.forEach(function (n) {
+      var l = document.createElement("label");
+      var c = document.createElement("input"); c.type = "checkbox"; c.checked = filterSel.indexOf(n) !== -1;
+      c.onchange = function () {
+        filterSel = filterSel.filter(function (x) { return x !== n; });
+        if (c.checked) filterSel.push(n);
+        saveFilterSel(); runFilter();
+      };
+      l.appendChild(c); l.appendChild(document.createTextNode(n)); box.appendChild(l);
+    });
+    $("filterCount").textContent = filterSel.length;
+  }
+  function runFilter() {
+    $("filterCount").textContent = filterSel.length;
+    var list = $("filterList"), st = $("filterState");
+    if (!filterSel.length) { list.innerHTML = ""; st.textContent = ""; return; }
+    if (!pca) { st.textContent = "Eerst aanmelden."; return; }
+    st.textContent = "Zoeken…";
+    getToken(false).then(function (token) {
+      var since = new Date(); since.setDate(since.getDate() - 365);
+      var parts = filterSel.map(function (n) { return "categories/any(c:c eq '" + n.replace(/'/g, "''") + "')"; });
+      var q = "/me/messages?$filter=receivedDateTime ge " + since.toISOString().replace(/\.\d+Z$/, "Z") + " and (" + parts.join(" or ") + ")" +
+        "&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,categories&$top=50";
+      return graph("GET", q, null, token).then(function (r) {
+        var rows = r.value || [];
+        list.innerHTML = "";
+        st.textContent = rows.length ? rows.length + (rows.length === 50 ? "+" : "") + " mails" : "Geen mails met deze categorie";
+        rows.forEach(function (x) {
+          var el = document.createElement("div"); el.className = "rel";
+          var mm = document.createElement("div"); mm.className = "m";
+          var from = (x.from && x.from.emailAddress) ? (x.from.emailAddress.name || x.from.emailAddress.address) : "";
+          mm.textContent = fmtDate(x.receivedDateTime) + " · " + from;
+          var sj = document.createElement("div"); sj.className = "s"; sj.textContent = x.subject || "(geen onderwerp)";
+          var cc = document.createElement("div"); cc.className = "c"; cc.textContent = (x.categories || []).join(", ");
+          el.appendChild(mm); el.appendChild(sj); el.appendChild(cc);
+          el.onclick = function () {
+            Office.context.mailbox.displayMessageForm(Office.context.mailbox.convertToEwsId(x.id, Office.MailboxEnums.RestVersion.v2_0));
+          };
+          list.appendChild(el);
+        });
+      });
+    }).catch(function (e) {
+      var t = (e && e.message) || "";
+      st.textContent = /aangemeld|aanmelding|interaction|login/i.test(t) ? "Eerst aanmelden (knop onderaan)." : "Filter mislukt: " + t;
+    });
+  }
+
+  // --- Gerelateerde mails: zelfde gesprek + zelfde onderwerp -----------------------
+  function cleanSubject(s) {
+    return (s || "").replace(/^\s*((re|fw|fwd|aw|wg|tr|antw|doorst)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  }
+  function relatedMails(token, m) {
+    var box = $("related"); box.textContent = "Zoeken…";
+    var subj = cleanSubject(m.subject);
+    var q1 = graph("GET", "/me/messages?$filter=conversationId eq '" + m.conversationId.replace(/'/g, "''") + "'&$select=id,subject,from,receivedDateTime&$top=25", null, token).catch(function () { return { value: [] }; });
+    var q2 = subj ? graph("GET", "/me/messages?$search=" + encodeURIComponent('"subject:' + subj.replace(/"/g, "") + '"') + "&$select=id,subject,from,receivedDateTime,conversationId&$top=25", null, token).catch(function () { return { value: [] }; }) : Promise.resolve({ value: [] });
+    return Promise.all([q1, q2]).then(function (res) {
+      var seen = {}; seen[m.id] = true;
+      var conv = (res[0].value || []).filter(function (x) { if (seen[x.id]) return false; seen[x.id] = true; return true; });
+      var same = (res[1].value || []).filter(function (x) { if (seen[x.id]) return false; seen[x.id] = true; return cleanSubject(x.subject).toLowerCase() === subj.toLowerCase(); });
+      box.innerHTML = "";
+      if (!conv.length && !same.length) { box.textContent = "Geen andere mails gevonden."; return; }
+      if (conv.length) { addGroup(box, "Zelfde gesprek", conv); }
+      if (same.length) { addGroup(box, "Zelfde onderwerp", same); }
+    });
+  }
+  function addGroup(box, title, list) {
+    var g = document.createElement("div"); g.className = "grp"; g.textContent = title; box.appendChild(g);
+    list.sort(function (a, b) { return a.receivedDateTime < b.receivedDateTime ? 1 : -1; }).forEach(function (x) {
+      var el = document.createElement("div"); el.className = "rel";
+      var mm = document.createElement("div"); mm.className = "m";
+      var from = (x.from && x.from.emailAddress) ? (x.from.emailAddress.name || x.from.emailAddress.address) : "";
+      mm.textContent = fmtDate(x.receivedDateTime) + " · " + from;
+      var s = document.createElement("div"); s.className = "s"; s.textContent = x.subject || "(geen onderwerp)";
+      el.appendChild(mm); el.appendChild(s);
+      el.onclick = function () {
+        var ews = Office.context.mailbox.convertToEwsId(x.id, Office.MailboxEnums.RestVersion.v2_0);
+        Office.context.mailbox.displayMessageForm(ews);
+      };
+      box.appendChild(el);
+    });
+  }
+
+  // --- Start -----------------------------------------------------------------------
+  if (isDialog()) { runDialog(); return; }
+  Office.onReady(function () {
+    me = (Office.context.mailbox.userProfile && Office.context.mailbox.userProfile.displayName) || "";
+    $("cats").addEventListener("click", function (e) {
+      var c = e.target.getAttribute && e.target.getAttribute("data-c");
+      if (c) toggleCat(c);   // nogmaals klikken = categorie weer verwijderen
+    });
+    $("deadline").addEventListener("change", function () { data.d = this.value; save("Deadline opgeslagen", function () { syncFlag("Deadline opgeslagen, vlag gezet"); }); });
+    $("dtime").addEventListener("change", function () { data.t = this.value; save("Tijd opgeslagen", function () { syncFlag("Tijd opgeslagen, vlag bijgewerkt"); }); });
+    $("clearDeadline").addEventListener("click", function () { data.d = ""; data.t = ""; save("Deadline gewist", function () { syncFlag("Deadline gewist, vlag verwijderd"); }); });
+    $("toCal").addEventListener("click", toCalendar);
+    $("fromCal").addEventListener("click", fromCalendar);
+    $("owner").addEventListener("change", function () {
+      data.v = this.value.trim(); rememberOwner(data.v); save("Verantwoordelijke opgeslagen");
+    });
+    $("addNote").addEventListener("click", function () {
+      var t = $("newNote").value.trim(); if (!t) return;
+      data.n.push({ t: new Date().toISOString(), a: me, x: t });
+      $("newNote").value = ""; save("Notitie toegevoegd");
+    });
+    $("signIn").addEventListener("click", function () {
+      $("authMsg").textContent = "Aanmelden…";
+      getToken(true).then(function () { $("auth").hidden = true; graphRefresh(loadSeq); runFilter(); })
+        .catch(function (e) { $("authMsg").textContent = "Aanmelden mislukt: " + (e.message || e); });
+    });
+    loadOwners(); loadFilterSel();
+    $("filterClear").addEventListener("click", function () { filterSel = []; saveFilterSel(); renderFilterCats(); runFilter(); });
+    // Bij vastgezet (gepind) paneel: opnieuw laden als je een andere mail selecteert.
+    if (Office.context.requirements.isSetSupported("Mailbox", "1.5")) {
+      Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, load);
+    }
+    initAuth().then(load);
+  });
+})();
+</script>
+</body>
+</html>
